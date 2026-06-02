@@ -1,0 +1,6 @@
+tag=toolchain-2026-06-02
+repo=taowen/torch2aie
+archive=torch2aie-toolchain-linux-x86_64-aie2p-chess-2026-06-02.tar.zst
+archive_sha256=70222aa334057fde23be96b8763fb63b53ff7615ec004ac16ecba3abb3d5aefb
+parts=torch2aie-toolchain-linux-x86_64-aie2p-chess-2026-06-02.tar.zst.part-000
+part_sha256_000=70222aa334057fde23be96b8763fb63b53ff7615ec004ac16ecba3abb3d5aefb

@@ -1,0 +1,16 @@
+build/
+__pycache__/
+*.pyc
+
+.venv/
+uv.lock
+
+toolchain/
+.cache/
+licenses/Xilinx.lic
+
+examples/gemm_asymmetric_tile_buffering/*/build/
+examples/gemm_asymmetric_tile_buffering/*/_build/
+examples/gemm_asymmetric_tile_buffering/*/*.exe
+
+*.whl

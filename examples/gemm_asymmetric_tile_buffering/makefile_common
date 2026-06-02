@@ -1,0 +1,111 @@
+##===- makefile_common ----------------------------------------------------===##
+#
+# This file licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+#
+# Copyright (C) 2026, Advanced Micro Devices, Inc.
+#
+##===----------------------------------------------------------------------===##
+# Shared Make rules for the vendored gemm_asymmetric_tile_buffering examples.
+# This copy uses a uv-managed Python environment plus repository-local unpacked
+# MLIR-AIE, Vitis AIE Essentials / Chess, and XRT trees.
+##===----------------------------------------------------------------------===##
+
+TORCH2AIE_ROOT ?= $(abspath ${srcdir}/../../..)
+TORCH2AIE_TOOLCHAIN ?= ${TORCH2AIE_ROOT}/toolchain
+TORCH2AIE_VENV ?= ${TORCH2AIE_ROOT}/.venv
+TORCH2AIE_PYTHON ?= ${TORCH2AIE_VENV}/bin/python
+TORCH2AIE_SYSROOT ?= ${TORCH2AIE_TOOLCHAIN}/sysroot
+
+AIETOOLS_DIR ?= ${TORCH2AIE_TOOLCHAIN}/aietools
+MLIR_AIE_DIR ?= ${TORCH2AIE_TOOLCHAIN}/mlir_aie
+XRT_DIR ?= ${TORCH2AIE_TOOLCHAIN}/xrt
+
+matrix_multiplication_dir := ${srcdir}/../support/matrix_multiplication
+kernel_dir ?= ${srcdir}
+
+kernels=mm_${m}x${k}x${n}
+aieargs+=-m $m -k $k -n $n
+target_suffix=${M}x${K}x${N}_${m}x${k}x${n}
+
+target_suffix?=${M}x${K}x${N}
+mlir_target?=build/aie_${target_suffix}.mlir
+xclbin_target?=build/final_${target_suffix}.xclbin
+insts_target?=build/insts_${target_suffix}.txt
+aie_py_src?=${targetname}.py
+
+runargs?=-v 1 --warmup 20 --iters 20 --verify false
+aieargs+=-M $M -K $K -N $N
+
+use_chess?=1
+
+opt_perf?=0
+
+ifneq (${use_chess}, 1)
+$(error gemm_asymmetric_tile_buffering in torch2aie is Chess-only; use use_chess=1)
+endif
+# --unified compiles all cores in a single xchesscc invocation, reducing
+# per-core Chess process startups and peak memory usage.
+aiecc_chess_flags=--unified
+
+KERNEL_CC=xchesscc_wrapper
+KERNEL_CFLAGS=aie2p -I ${AIETOOLS_DIR}/include -I ${MLIR_AIE_DIR}/include
+
+KERNEL_DEFINES=-DDIM_M=${m} -DDIM_K=${k} -DDIM_N=${n} -I${MLIR_AIE_DIR}/include/aie_kernels
+
+ifeq (${opt_perf}, 1)
+	KERNEL_DEFINES+=-DOPT_PERF_ENABLED
+endif
+
+ifeq (${use_placed}, 1)
+aie_py_src=${targetname}_placed.py
+endif
+
+# ##########################################################################
+# Targets
+# ##########################################################################
+
+.PHONY: all
+all: ${xclbin_target} ${targetname}.exe
+
+build/mm_${m}x${k}x${n}.o: ${kernel_dir}/${kernelsrc}
+	mkdir -p ${@D}
+	cd ${@D} && ${KERNEL_CC} ${KERNEL_CFLAGS} ${KERNEL_DEFINES} -c $< -o ${@F}
+
+${mlir_target}: ${srcdir}/${aie_py_src}
+	mkdir -p ${@D}
+	${TORCH2AIE_PYTHON} $< ${aieargs} > $@
+
+${xclbin_target}: ${mlir_target} ${kernels:%=build/%.o}
+	mkdir -p ${@D}
+	cd ${@D} && aiecc --aietools=${AIETOOLS_DIR} --alloc-scheme=${buffer_aloc_flag} --aie-generate-xclbin --no-compile-host --xclbin-name=${@F} \
+				${aiecc_chess_flags} --dynamic-objFifos \
+				--aie-generate-npu-insts --npu-insts-name=${insts_target:build/%=%} $(<:%=../%)
+
+${targetname}.exe: ${hostsrc} ${matrix_multiplication_dir}/common.h ${srcdir}/../../helper.h
+	rm -rf _build
+	mkdir -p _build
+	cd _build && cmake -E env CXXFLAGS="-std=c++23 -ggdb -DDTYPE_IN=${dtype_in_cpp} -DDTYPE_OUT=${dtype_out_cpp} -DDTYPE_ACC=${dtype_acc_cpp}" \
+		cmake ${srcdir}/.. \
+			-D CMAKE_C_COMPILER=${CC} \
+			-D CMAKE_CXX_COMPILER=${CXX} \
+			-D TARGET_NAME=${targetname} \
+			-D HOST_SRC=${hostsrc} \
+			-D MATMUL_DIR=${matrix_multiplication_dir} \
+			-D XRT_INC_DIR=${XRT_DIR}/include \
+			-D XRT_LIB_DIR=${XRT_DIR}/lib64 \
+			-D UUID_INC_DIR=${TORCH2AIE_SYSROOT}/usr/include \
+			-D UUID_LIB_DIR=${TORCH2AIE_SYSROOT}/usr/lib64 \
+			-D TEST_UTILS_INC_DIR=${MLIR_AIE_DIR}/runtime_lib/x86_64/test_lib/include \
+			-D TEST_UTILS_LIB_DIR=${MLIR_AIE_DIR}/runtime_lib/x86_64/test_lib/lib
+	cd _build && cmake --build . --config Release
+	cp _build/${targetname} $@
+
+.PHONY: run
+run: ${targetname}.exe ${xclbin_target}
+	./$< -x ${xclbin_target} -i ${insts_target} -k MLIR_AIE -M $M -K $K -N $N -w $m -y $k -z $n ${runargs}
+
+.PHONY: clean
+clean:
+	rm -rf build _build ${targetname}.exe
