@@ -25,6 +25,12 @@ case "$config" in
     default_n=1536
     default_target_tflops=31.3
     ;;
+  config2_w4a16)
+    default_m=3072
+    default_k=4096
+    default_n=1536
+    default_target_tflops=31.3
+    ;;
   config3)
     default_m=4096
     default_k=4096
@@ -33,7 +39,7 @@ case "$config" in
     ;;
   *)
     echo "unknown ATB config: $config" >&2
-    echo "valid configs: config1 config2 config3" >&2
+    echo "valid configs: config1 config2 config2_w4a16 config3" >&2
     exit 2
     ;;
 esac
@@ -53,9 +59,13 @@ run="${GEMM_RUN:-1}"
 target_tflops="${GEMM_TARGET_TFLOPS:-$default_target_tflops}"
 
 runargs="-v $verbosity --warmup $warmup --iters $iters --verify=$verify"
-if [ "${GEMM_W4A16_PREDEQUANT:-0}" = "1" ]; then
+if [ "$config" != "config2_w4a16" ] && [ "${GEMM_W4A16_PREDEQUANT:-0}" = "1" ]; then
   runargs="$runargs --w4a16-predequant=true"
   runargs="$runargs --w4-group-size ${GEMM_W4_GROUP_SIZE:-128}"
+  runargs="$runargs --w4-symmetric=${GEMM_W4_SYMMETRIC:-false}"
+fi
+if [ "$config" = "config2_w4a16" ]; then
+  runargs="$runargs --w4-group-size ${GEMM_W4_GROUP_SIZE:-32}"
   runargs="$runargs --w4-symmetric=${GEMM_W4_SYMMETRIC:-false}"
 fi
 
