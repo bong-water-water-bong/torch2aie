@@ -12,5 +12,8 @@ licenses/Xilinx.lic
 examples/gemm_asymmetric_tile_buffering/*/build/
 examples/gemm_asymmetric_tile_buffering/*/_build/
 examples/gemm_asymmetric_tile_buffering/*/*.exe
+examples/prefill_attention/build/
+examples/prefill_attention/_build/
+examples/prefill_attention/*.exe
 
 *.whl
