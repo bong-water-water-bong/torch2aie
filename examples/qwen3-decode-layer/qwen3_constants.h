@@ -24,12 +24,12 @@ constexpr int32_t kMain16PhaseLimitQkvo = kOPhase + 1;
 constexpr int32_t kMain16PhaseLimitUpGate = kGatePhase + 1;
 constexpr int32_t kMain16PhaseLimitFull = kDownPhase + 1;
 
-constexpr int32_t kQCompactPacketId = 10;
-constexpr int32_t kKCompactPacketId = 11;
-constexpr int32_t kVCompactPacketId = 12;
-constexpr int32_t kOCompactPacketId = 13;
-constexpr int32_t kFfnCompactPacketId = 14;
-constexpr int32_t kDownCompactPacketId = 15;
+constexpr int32_t kQCompactPacketId = 0x1;
+constexpr int32_t kKCompactPacketId = 0x1;
+constexpr int32_t kVCompactPacketId = 0x1;
+constexpr int32_t kOCompactPacketId = 0x4;
+constexpr int32_t kFfnCompactPacketId = 0x8;
+constexpr int32_t kDownCompactPacketId = 0x4;
 
 constexpr int32_t kMainActivationEmptyLock = 0;
 constexpr int32_t kMainActivationFullLock = 1;

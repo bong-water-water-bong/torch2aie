@@ -3,6 +3,8 @@
 
 namespace {
 
+constexpr int32_t kRmsVecLanes = 32;
+
 static bfloat16 compact_lane(int32_t *compact, int32_t lane) {
     bfloat16 *payload = reinterpret_cast<bfloat16 *>(compact + 1);
     return payload[lane];
@@ -59,15 +61,25 @@ static float fast_rsqrt(float value) {
         y = 0.125f;
     }
     const float half = value * 0.5f;
-    for (int32_t iter = 0; iter < 10; iter++) {
+    for (int32_t iter = 0; iter < 10; iter++)
+        chess_prepare_for_pipelining chess_loop_range(10, 10) {
         y = y * (1.5f - half * y * y);
     }
     return y;
 }
 
-static float rms_scale(bfloat16 *values, int32_t lanes) {
-    float sum_sq = 0.0f;
-    for (int32_t lane = 0; lane < lanes; lane++) {
+static float rms_scale(bfloat16 *__restrict values, int32_t lanes) {
+    const int32_t vector_lanes = lanes & ~(kRmsVecLanes - 1);
+    aie::accum<accfloat, kRmsVecLanes> sum_acc =
+        aie::zeros<accfloat, kRmsVecLanes>();
+    for (int32_t lane = 0; lane < vector_lanes; lane += kRmsVecLanes)
+        chess_prepare_for_pipelining chess_loop_range(128, 128) {
+        aie::vector<bfloat16, kRmsVecLanes> value_vec =
+            aie::load_v<kRmsVecLanes>(values + lane);
+        sum_acc = aie::mac(sum_acc, value_vec, value_vec);
+    }
+    float sum_sq = aie::reduce_add(sum_acc.template to_vector<float>());
+    for (int32_t lane = vector_lanes; lane < lanes; lane++) {
         const float value = static_cast<float>(values[lane]);
         sum_sq += value * value;
     }
@@ -82,7 +94,8 @@ static void write_weighted_rms_values(
     int32_t lanes
 ) {
     const float scale = rms_scale(values, lanes);
-    for (int32_t lane = 0; lane < lanes; lane++) {
+    for (int32_t lane = 0; lane < lanes; lane++)
+        chess_prepare_for_pipelining chess_loop_range(1, 4096) {
         store_bf16_rne(
             payload,
             lane,
@@ -141,7 +154,8 @@ void full_c1r2_add_o_compact_to_residual(int32_t *hidden, int32_t *compact, int3
     constexpr int32_t lanes_per_block = 512;
     bfloat16 *residual = as_bf16(hidden);
     const int32_t base = block * lanes_per_block;
-    for (int32_t lane = 0; lane < lanes_per_block; lane++) {
+    for (int32_t lane = 0; lane < lanes_per_block; lane++)
+        chess_prepare_for_pipelining chess_loop_range(lanes_per_block, lanes_per_block) {
         const int32_t global_lane = base + lane;
         residual[global_lane] = bf16_rne(
             static_cast<float>(residual[global_lane]) + static_cast<float>(compact_lane(compact, lane))
@@ -178,7 +192,8 @@ void full_c1r2_write_down_block(int32_t *residual, int32_t *compact, int32_t *ou
     bfloat16 *residual_values = as_bf16(residual);
     bfloat16 *output_values = as_bf16(output);
     const int32_t base = block * lanes_per_block;
-    for (int32_t lane = 0; lane < lanes_per_block; lane++) {
+    for (int32_t lane = 0; lane < lanes_per_block; lane++)
+        chess_prepare_for_pipelining chess_loop_range(lanes_per_block, lanes_per_block) {
         const int32_t global_lane = base + lane;
         output_values[global_lane] = bf16_rne(
             static_cast<float>(residual_values[global_lane]) + static_cast<float>(compact_lane(compact, lane))
@@ -190,7 +205,8 @@ void full_c1r2_write_o_block(int32_t *compact, int32_t *output, int32_t block) {
     constexpr int32_t lanes_per_block = 512;
     bfloat16 *output_values = as_bf16(output);
     const int32_t base = block * lanes_per_block;
-    for (int32_t lane = 0; lane < lanes_per_block; lane++) {
+    for (int32_t lane = 0; lane < lanes_per_block; lane++)
+        chess_prepare_for_pipelining chess_loop_range(lanes_per_block, lanes_per_block) {
         output_values[base + lane] = compact_lane(compact, lane);
     }
 }

@@ -1229,8 +1229,7 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
         flows.append(flow(f"mt{group}", COLUMN_OUT_CHANNEL, "bridge", group))
         flows.append(flow(f"shim{group}", 0, f"mt{group}", 4))
         flows.append(flow(f"shim{group}", 1, f"mt{group}", 5))
-    for packet in (Q_GLOBAL_PACKET_ID, K_GLOBAL_PACKET_ID, V_GLOBAL_PACKET_ID):
-        flows.append(packet_flow(packet, "bridge", BRIDGE_COMPACT_OUT_CHANNEL, "post", 0))
+    flows.append(packet_flow(Q_GLOBAL_PACKET_ID, "bridge", BRIDGE_COMPACT_OUT_CHANNEL, "post", 0))
     flows.extend(
         (
             packet_flow(CURRENT_PACKET_K, "post", 1, "shim_left", 1),
@@ -1259,7 +1258,6 @@ def generate_mlir(schedule: DecodeSchedule = DEFAULT_SCHEDULE) -> str:
             packet_flow(FFN_GLOBAL_PACKET_ID, "bridge", BRIDGE_COMPACT_OUT_CHANNEL, "swiglu", 0),
             flow("swiglu", 1, "hub", HUB_FFN_IN_CHANNEL),
             packet_flow(DOWN_ACT_PACKET_ID, "hub", 5, "bridge", 4),
-            packet_flow(DOWN_GLOBAL_PACKET_ID, "bridge", BRIDGE_COMPACT_OUT_CHANNEL, "full", 0, keep_pkt_header=True),
             flow("shim_out", 0, "full", 1),
             flow("shim_out", 1, "post", 1),
             flow("full", 0, "shim_out", 1),
@@ -1389,8 +1387,11 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
             ),
         )
     )
-    expected_packets = 11
+    expected_packets = 8
     errors.extend(require_count(CASE_NAME, "packet flow", mlir.count("aie.packet_flow("), expected_packets))
+    for old_packet in (10, 11, 12, 13, 14, 15):
+        if f"aie.packet_flow({old_packet})" in mlir:
+            errors.append(f"full-layer compact route must use MyLM packet 1/4/8, not packet{old_packet}")
     main_tile_count = len(MAIN_COLUMNS) * len(MAIN_ROWS)
     errors.extend(require_count(CASE_NAME, "q4nx main16 layer scheduler calls", mlir.count(f"func.call @{MAIN16_LAYER_SCHEDULER}"), main_tile_count))
     errors.extend(require_count(CASE_NAME, "main16 full phase limit constants", mlir.count(f"%main16_phase_limit_i32 = arith.constant {MAIN16_PHASE_LIMIT_FULL} : i32"), main_tile_count))
@@ -1528,7 +1529,7 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     if f"buffer_length = {PATCH_WEIGHT_BF16 // 2} : i32" in mlir:
         errors.append("full-layer weight ingress must use bounded descriptor spans, not one monolithic patch BD")
     if CURRENT_PACKET_K != 8 or CURRENT_PACKET_V != 9:
-        errors.append("current K/V packets must stay at 8/9 to avoid full-layer packet14/15 traffic")
+        errors.append("current K/V packets must stay at 8/9 to match the cache writeback ABI")
     if DOWN_CHUNKS != 48 or TOTAL_MAIN_CHUNKS != 768:
         errors.append("full-layer replay/down chunk contract mismatch")
     if (

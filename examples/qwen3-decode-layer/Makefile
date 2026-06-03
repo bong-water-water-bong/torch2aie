@@ -11,6 +11,8 @@ MLIR_AIE_DIR ?= ${TORCH2AIE_TOOLCHAIN}/mlir_aie
 XRT_DIR ?= ${TORCH2AIE_TOOLCHAIN}/xrt
 
 CURRENT_TOKEN ?= 31
+LAYER ?= 0
+MODEL_PATH ?= /var/home/taowen/flm/models/Qwen3-8B-NPU2
 
 export PYTHONNOUSERSITE := 1
 export PYTHONPATH := ${srcdir}:${XRT_DIR}/python:${MLIR_AIE_DIR}/python:${MLIR_AIE_DIR}/src/python${PYTHONPATH:+:${PYTHONPATH}}
@@ -42,8 +44,80 @@ build:
 run:
 	${TORCH2AIE_PYTHON} ${srcdir}/run_qkv_prefix.py --current-token ${CURRENT_TOKEN}
 
+.PHONY: full-check
+full-check:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_full_layer.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --check-only
+
+.PHONY: full-build
+full-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_full_layer.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --build-only
+
+.PHONY: full-run
+full-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_full_layer.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH}
+
+.PHONY: weight-stream-build
+weight-stream-build:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_only.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_stream.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --build-only
+
+.PHONY: weight-stream-run
+weight-stream-run:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_only.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_stream.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH}
+
+.PHONY: weight-stream-light-edge-build
+weight-stream-light-edge-build:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_only.cc QWEN3_POSTPROCESS_QKV_SOURCE=postprocess_qkv_light.cc QWEN3_FULL_VECTOR_STATION_SOURCE=full_vector_station_light.cc QWEN3_EDGE_ATTENTION_SOURCE=edge_attention_light.cc QWEN3_SWIGLU_SOURCE=swiglu_light.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_stream.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --build-only
+
+.PHONY: weight-stream-light-edge-run
+weight-stream-light-edge-run:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_only.cc QWEN3_POSTPROCESS_QKV_SOURCE=postprocess_qkv_light.cc QWEN3_FULL_VECTOR_STATION_SOURCE=full_vector_station_light.cc QWEN3_EDGE_ATTENTION_SOURCE=edge_attention_light.cc QWEN3_SWIGLU_SOURCE=swiglu_light.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_stream.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH}
+
+.PHONY: weight-stream-light-attention-run
+weight-stream-light-attention-run:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_only.cc QWEN3_EDGE_ATTENTION_SOURCE=edge_attention_light.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_stream.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH}
+
+.PHONY: weight-path-build
+weight-path-build:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_path.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_path.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --build-only
+
+.PHONY: weight-path-run
+weight-path-run:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_path.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_path.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH}
+
+.PHONY: weight-compact-build
+weight-compact-build:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_compact.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_compact.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --build-only
+
+.PHONY: weight-compact-run
+weight-compact-run:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_weight_compact.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_weight_compact.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH}
+
+.PHONY: analyze-main16
+analyze-main16:
+	${TORCH2AIE_PYTHON} ${srcdir}/analyze_main16_chess.py
+
+.PHONY: analyze-dataflow
+analyze-dataflow:
+	${TORCH2AIE_PYTHON} ${srcdir}/analyze_dataflow_backpressure.py
+
+.PHONY: native-probe
+native-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_native_probe.cc \
+	  -o build/native-probe/main16_native_probe.o
+	@for op in VUNPACK VEXTBCST.16 VMAC.F VCONV.BF16.FP32 VST NOPX NOPA NOPV; do \
+	  printf '%-16s ' "$$op"; \
+	  strings build/native-probe/main16_native_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+
 .PHONY: clean
 clean:
 	rm -rf build _build __pycache__ cases/__pycache__
-	rm -f full_vector_station.o main_projection_q4nx_fast.o postprocess_qkv.o
+	rm -f edge_attention.o full_vector_station.o main_projection_q4nx_fast.o postprocess_qkv.o swiglu.o
 	rm -f qwen3_decode_layer.exe

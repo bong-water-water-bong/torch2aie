@@ -303,14 +303,20 @@ def require_dma_bd_next_ids(scope: str, mlir: str) -> list[str]:
 
 
 def require_unique_packet_flows(scope: str, mlir: str) -> list[str]:
-    packet_ids = [int(item) for item in re.findall(r"aie\.packet_flow\(([0-9]+)\)", mlir)]
-    seen: set[int] = set()
-    duplicates: list[int] = []
-    for packet_id in packet_ids:
-        if packet_id in seen and packet_id not in duplicates:
-            duplicates.append(packet_id)
-        seen.add(packet_id)
-    return [f"{scope}: duplicate packet_flow id {packet_id}" for packet_id in duplicates]
+    flow_pattern = re.compile(r"aie\.packet_flow\(([0-9]+)\)\s*\{\n(.*?)\n    \}", re.S)
+    seen: set[tuple[int, tuple[str, ...], tuple[str, ...]]] = set()
+    duplicates: list[tuple[int, tuple[str, ...], tuple[str, ...]]] = []
+    for packet_id, body in flow_pattern.findall(mlir):
+        sources = tuple(re.findall(r"aie\.packet_source<([^>]+)>", body))
+        dests = tuple(re.findall(r"aie\.packet_dest<([^>]+)>", body))
+        route = (int(packet_id), sources, dests)
+        if route in seen and route not in duplicates:
+            duplicates.append(route)
+        seen.add(route)
+    return [
+        f"{scope}: duplicate packet_flow route id {packet_id} sources={sources} dests={dests}"
+        for packet_id, sources, dests in duplicates
+    ]
 
 
 def require_main_record_phase_barrier(scope: str, mlir: str, first_acquire: int) -> list[str]:

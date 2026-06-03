@@ -25,8 +25,41 @@ experiment diary.
   https://docs.amd.com/r/en-US/ug1079-ai-engine-kernel-coding/Loop-Flattening-and-Unrolling
 - AMD UG1079, Scheduling Separator:
   https://docs.amd.com/r/en-US/ug1079-ai-engine-kernel-coding/Scheduling-Separator
-- AMD AIE Intrinsics reference:
-  https://download.amd.com/docnav/aiengine/aiengine_intrinsics_start.html
+- AMD UG1639, AI Engine-ML v2 Intrinsics reference for AIE2P / `npu2`:
+  https://download.amd.com/docnav/aiengine/xilinx2025_2/aiengine_ml_v2_intrinsics/intrinsics/index.html
+- AMD UG1529, AI Engine API reference for portable `aie::` C++ APIs:
+  https://download.amd.com/docnav/aiengine/xilinx2025_2/aiengine_api/aie_api/doc/index.html
+
+## AMD Doc TOC
+
+- UG1639 AIE-ML v2 Intrinsics is the low-level AIE2P / `npu2` reference. Top
+  level: Data Types, Intrinsics, Compiler optimizations, Native only.
+- UG1639 Data Types: Vector Data Types, Accumulator Data Types, Scalar Data
+  Types.
+- UG1639 Intrinsics: Load/Store Operations, Scalar Operations, Vector
+  Conversions, Vector Operations.
+- UG1639 Load/Store: Addressing intrinsics, Streams, Load 4x Operations.
+- UG1639 Scalar Operations: Integer Operations, Locks, Events, Cycle Counter,
+  Core ID, Configuration / Mode Settings.
+- UG1639 Vector Conversions: Broadcast, BF16-to-integer conversions, Casting,
+  Shift-Round-Saturate, Upshift, Pack/Unpack, Extract/Set/Insert/Concatenate
+  vector, Extract/insert element.
+- UG1639 Vector Operations: Add/Subtract, Bitwise logical, Compare/Select,
+  Initialization, Shuffle, Multiply Accumulate, Shift, Shift element.
+- UG1639 Native only: Stream access.
+- UG1529 AIE API is the portable C++ `aie::` API reference. Top level:
+  Overview, Changelog, Deprecated List, API Reference.
+- UG1529 API Reference topics: Basic Types, Configuration, Memory,
+  Initialization, Arithmetic, Bits, Comparison, Reduction, Reshaping,
+  Floating-point Conversion, Elementary Functions, Matrix Multiplication, FFT,
+  Special Multiplications, Lookup Tables, Operator Overloading, ADF
+  Interoperability, Utility functions/classes.
+- UG1529 Basic Types subtopics: Basic Type Initialization, Vector and
+  Accumulator Conversions, Concepts for Basic Types, Accumulator Element Types,
+  Lazy Operations.
+- UG1529 Utility subtopics: Architecture helpers, Print functions, Loop
+  functions, Loop unrolling, Loop pipelining, Non-portable optimizations,
+  Register pinning.
 
 ## Chess Pragmas
 

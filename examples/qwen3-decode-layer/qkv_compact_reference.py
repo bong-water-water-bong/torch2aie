@@ -27,12 +27,12 @@ MAIN_CHUNK_DWORDS = 128
 SUMMARY_DWORDS = 8
 OUTPUT_DWORDS = 8
 PACKET_ID_ATTENTION = 2
-Q_GLOBAL_PACKET_ID = 10
-K_GLOBAL_PACKET_ID = 11
-V_GLOBAL_PACKET_ID = 12
-O_GLOBAL_PACKET_ID = 13
-FFN_GLOBAL_PACKET_ID = 14
-DOWN_GLOBAL_PACKET_ID = 15
+Q_GLOBAL_PACKET_ID = 0x1
+K_GLOBAL_PACKET_ID = 0x1
+V_GLOBAL_PACKET_ID = 0x1
+O_GLOBAL_PACKET_ID = 0x4
+FFN_GLOBAL_PACKET_ID = 0x8
+DOWN_GLOBAL_PACKET_ID = 0x4
 MAIN_PACKET_BASE = 16
 COLUMN_PACKET_BASE = 4
 
@@ -43,6 +43,16 @@ def main_packet(group: int, row: int) -> int:
 
 def column_packet(group: int) -> int:
     return COLUMN_PACKET_BASE + group
+
+
+def mylm_record_header_for_phase(phase: int) -> int:
+    if phase in (Q_PHASE, K_PHASE, V_PHASE):
+        return 0x1
+    if phase in (O_PHASE, 6):
+        return 0x4
+    if phase in (4, 5):
+        return 0x8
+    raise ValueError(f"unknown compact record phase: {phase}")
 
 
 def phase_packet_id(phase: int) -> int:
@@ -62,11 +72,13 @@ def phase_packet_id(phase: int) -> int:
 
 
 def record_header(phase: int, group: int, row: int) -> int:
-    return (phase << 24) | (group << 16) | (row << 8) | phase_packet_id(phase)
+    _ = (group, row)
+    return mylm_record_header_for_phase(phase)
 
 
 def body_record_header(phase: int, block: int, group: int, row: int) -> int:
-    return (phase << 24) | (block << 20) | (group << 16) | (row << 8) | phase_packet_id(phase)
+    _ = (block, group, row)
+    return mylm_record_header_for_phase(phase)
 
 
 def qkv_payload_value(phase: int, group: int, row: int, lane: int) -> int:

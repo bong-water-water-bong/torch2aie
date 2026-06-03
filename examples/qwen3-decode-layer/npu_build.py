@@ -1,4 +1,4 @@
-"""Build and runtime helpers for the strict Qwen3 QKV-prefix case."""
+"""Build and runtime helpers for the strict Qwen3 decode-layer cases."""
 
 from __future__ import annotations
 
@@ -20,11 +20,18 @@ SYSROOT_DIR = Path(os.environ.get("TORCH2AIE_SYSROOT", TOOLCHAIN_DIR / "sysroot"
 ROLE_OBJECT_DIR = TORCH2AIE_ROOT / "build" / "qwen3_decode_layer_objects"
 COMPILE_DIR = TORCH2AIE_ROOT / "build" / "qwen3_decode_layer_compile"
 AIECC_JOBS = os.environ.get("AIECC_JOBS", "4")
+MAIN16_KERNEL_SOURCE = os.environ.get("QWEN3_MAIN16_KERNEL_SOURCE", "qwen3_decode_kernels.cc")
+EDGE_ATTENTION_SOURCE = os.environ.get("QWEN3_EDGE_ATTENTION_SOURCE", "edge_attention.cc")
+FULL_VECTOR_STATION_SOURCE = os.environ.get("QWEN3_FULL_VECTOR_STATION_SOURCE", "full_vector_station.cc")
+POSTPROCESS_QKV_SOURCE = os.environ.get("QWEN3_POSTPROCESS_QKV_SOURCE", "postprocess_qkv.cc")
+SWIGLU_SOURCE = os.environ.get("QWEN3_SWIGLU_SOURCE", "swiglu.cc")
 
 ROLE_KERNEL_SOURCES = {
-    "full_vector_station.o": ("full_vector_station.cc",),
-    "main_projection_q4nx_fast.o": ("qwen3_decode_kernels.cc",),
-    "postprocess_qkv.o": ("postprocess_qkv.cc",),
+    "edge_attention.o": (EDGE_ATTENTION_SOURCE,),
+    "full_vector_station.o": (FULL_VECTOR_STATION_SOURCE,),
+    "main_projection_q4nx_fast.o": (MAIN16_KERNEL_SOURCE,),
+    "postprocess_qkv.o": (POSTPROCESS_QKV_SOURCE,),
+    "swiglu.o": (SWIGLU_SOURCE,),
 }
 ROLE_KERNEL_HEADERS = ("qwen3_constants.h", "record_format.h")
 LINK_WITH_RE = re.compile(r'link_with = "[^"]*/([^/"]+\.o)"')
@@ -144,7 +151,7 @@ def _update_build_key_file(hasher: BuildHasher, path: Path) -> None:
 
 def _build_key(mlir_text: str, object_names: tuple[str, ...], command: list[str]) -> str:
     hasher = hashlib.sha256()
-    hasher.update(b"torch2aie-qwen3-qkv-prefix-chess-v1\0")
+    hasher.update(b"torch2aie-qwen3-decode-layer-chess-v2\0")
     hasher.update("\n".join(command).encode())
     hasher.update(b"\0")
     hasher.update(mlir_text.encode())

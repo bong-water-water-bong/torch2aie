@@ -3,6 +3,8 @@
 
 namespace {
 
+constexpr int32_t kRmsVecLanes = 32;
+
 static uint16_t bf16_bits(float value) {
     union {
         float f32;
@@ -54,8 +56,17 @@ static float fast_rsqrt(float value) {
 
 static float head_rms_scale(bfloat16 *body, int32_t head, int32_t head_dim) {
     const int32_t base = head * head_dim;
-    float sum_sq = 0.0f;
-    for (int32_t dim = 0; dim < head_dim; dim++) {
+    const int32_t vector_lanes = head_dim & ~(kRmsVecLanes - 1);
+    aie::accum<accfloat, kRmsVecLanes> sum_acc =
+        aie::zeros<accfloat, kRmsVecLanes>();
+    for (int32_t dim = 0; dim < vector_lanes; dim += kRmsVecLanes)
+        chess_prepare_for_pipelining chess_loop_range(4, 4) {
+        aie::vector<bfloat16, kRmsVecLanes> value_vec =
+            aie::load_v<kRmsVecLanes>(body + base + dim);
+        sum_acc = aie::mac(sum_acc, value_vec, value_vec);
+    }
+    float sum_sq = aie::reduce_add(sum_acc.template to_vector<float>());
+    for (int32_t dim = vector_lanes; dim < head_dim; dim++) {
         const float value = static_cast<float>(body[base + dim]);
         sum_sq += value * value;
     }
