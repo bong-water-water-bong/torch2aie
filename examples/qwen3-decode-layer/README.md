@@ -82,6 +82,8 @@ make -C examples/qwen3-decode-layer weight-stream-light-attention-run
 make -C examples/qwen3-decode-layer weight-path-run
 make -C examples/qwen3-decode-layer weight-compact-run
 
+make -C examples/qwen3-decode-layer analyze-kernels
+make -C examples/qwen3-decode-layer analyze-kernels KERNELS=postprocess_qkv.o
 make -C examples/qwen3-decode-layer analyze-main16
 make -C examples/qwen3-decode-layer analyze-dataflow
 make -C examples/qwen3-decode-layer native-probe
@@ -94,7 +96,7 @@ The full-layer runtime ABI is:
 `k_cache, v_cache, aux_prefixed_weights, output, hidden`.
 
 On the local NPU, the current Chess C++ full-layer frontier passes layer0/token31
-against the CPU oracle and runs in about `55,494 us`.  Main16 uses an AIE API
+against the CPU oracle and runs in about `37,000 us`.  Main16 uses an AIE API
 vector Q4 unpack/dequant/MAC path; the earlier scalar correctness baseline was
 about `5,389,748 us`.
 
@@ -106,7 +108,7 @@ counting activation, KV cache, or control traffic.
 
 Current local measurements:
 
-- Full layer, numerically checked: about `55,494 us`, effective `2.02 GiB/s`.
+- Full layer, numerically checked: about `37,000 us`, effective `3.03 GiB/s`.
 - Full graph with Main16 Q4NX compute replaced by consume/drop:
   `41,205 us`, effective `2.73 GiB/s`.
 - Same full graph and Main16 consume/drop, but with post-c1r1 edge kernels
@@ -145,6 +147,14 @@ the light-edge full graph, and the production-edge full graph.
 `analyze-main16` reports whole-core static opcode counts, PM size, NOPs, and
 the bandwidth lower bound for the current build artifact.  Treat those opcode
 counts as a direction check, not as MyLM hot-loop dynamic counts.
+
+`analyze-kernels` is the fast per-role Chess report.  It compiles each linked
+role object independently and summarizes the generated `.lst`: instruction
+lines, loop count, max loop listing span, `.swstall`, compiler warnings, vector
+opcode counts, and NOP totals.  Use `KERNELS=<object>.o` for a single touched
+kernel before paying for a full 27-core build.  Current useful next targets are
+the `edge_attention.o` loop #3 warning and the `full_vector_station.o` loop #8
+warning.
 
 `native-probe` compiles a small Chess object that verifies the native intrinsic
 surface needed for the Q4NX hot loop.  Current verified rules:

@@ -96,6 +96,10 @@ weight-compact-run:
 analyze-main16:
 	${TORCH2AIE_PYTHON} ${srcdir}/analyze_main16_chess.py
 
+.PHONY: analyze-kernels
+analyze-kernels:
+	${TORCH2AIE_PYTHON} ${srcdir}/analyze_kernel_chess.py ${KERNELS:%=--kernel %}
+
 .PHONY: analyze-dataflow
 analyze-dataflow:
 	${TORCH2AIE_PYTHON} ${srcdir}/analyze_dataflow_backpressure.py
