@@ -32,20 +32,19 @@ __attribute__((always_inline)) static inline Acc16 zero_accum16() {
   return aie::zeros<accfloat, kQ4NxRowsPerLane>();
 }
 
-__attribute__((always_inline)) static inline aie::vector<bfloat16, qwen3::kMainRowsPerTile>
-load_q4_dim_pair(const uint8_t *__restrict group_data, unsigned dim_pair) {
+__attribute__((always_inline)) static inline aie::vector<bfloat16, kQ4NxRowsPerLane * 4>
+load_q4_dim_quad(const uint8_t *__restrict group_data, unsigned dim_quad) {
   const uint4 *__restrict q4_ptr = reinterpret_cast<const uint4 *>(
-      group_data + dim_pair * kQ4NxRowsPerLane);
-  aie::vector<uint4, qwen3::kMainRowsPerTile> q4 =
-      aie::load_v<qwen3::kMainRowsPerTile, aie_dm_resource::d>(q4_ptr);
-  aie::vector<uint8, qwen3::kMainRowsPerTile> q8 = aie::unpack(q4);
-  aie::vector<uint16, qwen3::kMainRowsPerTile> q16 = aie::unpack(q8);
-  return aie::to_float<bfloat16>(q16, 0);
+      group_data + dim_quad * kQ4NxRowsPerLane * 2);
+  aie::vector<uint4, kQ4NxRowsPerLane * 4> q4 =
+      aie::load_v<kQ4NxRowsPerLane * 4, aie_dm_resource::d>(q4_ptr);
+  aie::vector<uint8, kQ4NxRowsPerLane * 4> q8 = aie::unpack(q4);
+  return aie::to_float<bfloat16>(q8, 0);
 }
 
-__attribute__((always_inline)) static inline void mac_q4_dim_pair(
+__attribute__((always_inline)) static inline void mac_q4_dim_quad(
     Acc16 &acc,
-    const aie::vector<bfloat16, qwen3::kMainRowsPerTile> &q_bf16,
+    const aie::vector<bfloat16, kQ4NxRowsPerLane * 4> &q_bf16,
     const aie::vector<bfloat16, kQ4NxRowsPerLane> &scale_vec,
     const aie::vector<bfloat16, kQ4NxRowsPerLane> &offset_vec,
     const aie::vector<bfloat16, kGroupSize> &act_group,
@@ -67,6 +66,24 @@ __attribute__((always_inline)) static inline void mac_q4_dim_pair(
   aie::vector<bfloat16, kQ4NxRowsPerLane> act1 =
       aie::broadcast<bfloat16, kQ4NxRowsPerLane>(act_group.get(dim + 1));
   acc = aie::mac(acc, dequant1, act1);
+
+  aie::vector<bfloat16, kQ4NxRowsPerLane> q2 =
+      q_bf16.template extract<kQ4NxRowsPerLane>(2);
+  Acc16 scaled2 = aie::mul(q2, scale_vec);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> dequant2 =
+      aie::add(scaled2.template to_vector<bfloat16>(), offset_vec);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> act2 =
+      aie::broadcast<bfloat16, kQ4NxRowsPerLane>(act_group.get(dim + 2));
+  acc = aie::mac(acc, dequant2, act2);
+
+  aie::vector<bfloat16, kQ4NxRowsPerLane> q3 =
+      q_bf16.template extract<kQ4NxRowsPerLane>(3);
+  Acc16 scaled3 = aie::mul(q3, scale_vec);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> dequant3 =
+      aie::add(scaled3.template to_vector<bfloat16>(), offset_vec);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> act3 =
+      aie::broadcast<bfloat16, kQ4NxRowsPerLane>(act_group.get(dim + 3));
+  acc = aie::mac(acc, dequant3, act3);
 }
 
 __attribute__((always_inline)) static inline void accum_q4nx_group_lane(
@@ -79,29 +96,31 @@ __attribute__((always_inline)) static inline void accum_q4nx_group_lane(
   aie::vector<bfloat16, kQ4NxRowsPerLane> offset_vec =
       aie::load_v<kQ4NxRowsPerLane, aie_dm_resource::b>(offset_group);
 
-  aie::vector<bfloat16, qwen3::kMainRowsPerTile> q_bf16_current =
-      load_q4_dim_pair(group_data, 0);
-  aie::pipelined_loop<kGroupSize / 2 - 1>(
-      kGroupSize / 2 - 1, [&](unsigned dim_pair) __aie_inline {
-    aie::vector<bfloat16, qwen3::kMainRowsPerTile> q_bf16_next =
-        load_q4_dim_pair(group_data, dim_pair + 1);
-    mac_q4_dim_pair(acc, q_bf16_current, scale_vec, offset_vec, act_group,
-                    static_cast<int32_t>(dim_pair) * 2);
+  aie::vector<bfloat16, kQ4NxRowsPerLane * 4> q_bf16_current =
+      load_q4_dim_quad(group_data, 0);
+  aie::pipelined_loop<kGroupSize / 4 - 1>(
+      kGroupSize / 4 - 1, [&](unsigned dim_quad) __aie_inline {
+    aie::vector<bfloat16, kQ4NxRowsPerLane * 4> q_bf16_next =
+        load_q4_dim_quad(group_data, dim_quad + 1);
+    mac_q4_dim_quad(acc, q_bf16_current, scale_vec, offset_vec, act_group,
+                    static_cast<int32_t>(dim_quad) * 4);
     q_bf16_current = q_bf16_next;
   });
-  mac_q4_dim_pair(acc, q_bf16_current, scale_vec, offset_vec, act_group,
-                  kGroupSize - 2);
+  mac_q4_dim_quad(acc, q_bf16_current, scale_vec, offset_vec, act_group,
+                  kGroupSize - 4);
 }
 
 __attribute__((always_inline)) static inline void
-accum_q4nx_chunk(Acc16 &acc0, Acc16 &acc1, bfloat16 *packed_chunk,
-                 int32_t *activation_words) {
-  bfloat16 *scales = packed_chunk;
-  bfloat16 *offsets = reinterpret_cast<bfloat16 *>(
-      reinterpret_cast<uint8_t *>(packed_chunk) + kQ4NxScaleBytes);
-  const uint8_t *packed_data =
-      reinterpret_cast<uint8_t *>(packed_chunk) + kQ4NxDataOffsetBytes;
-  bfloat16 *activation = reinterpret_cast<bfloat16 *>(activation_words);
+accum_q4nx_chunk(Acc16 &acc0, Acc16 &acc1,
+                 const bfloat16 *__restrict packed_chunk,
+                 const int32_t *__restrict activation_words) {
+  const bfloat16 *__restrict scales = packed_chunk;
+  const bfloat16 *__restrict offsets = reinterpret_cast<const bfloat16 *>(
+      reinterpret_cast<const uint8_t *>(packed_chunk) + kQ4NxScaleBytes);
+  const uint8_t *__restrict packed_data =
+      reinterpret_cast<const uint8_t *>(packed_chunk) + kQ4NxDataOffsetBytes;
+  const bfloat16 *__restrict activation =
+      reinterpret_cast<const bfloat16 *>(activation_words);
 
   aie::pipelined_loop<kGroupsPerChunk>(
       kGroupsPerChunk, [&](unsigned qgroup) __aie_inline {
@@ -156,9 +175,12 @@ emit_cycle_record(Acc16 &acc0, Acc16 &acc1, int32_t *record, int32_t block,
 
 template <int32_t Records, int32_t ChunksPerRecord>
 __attribute__((always_inline)) static inline void
-run_projection_body(bfloat16 *wt_ping, bfloat16 *wt_pong, int32_t *act_ping,
-                    int32_t *act_pong, int32_t *record_ping,
-                    int32_t *record_pong, int32_t record_header,
+run_projection_body(const bfloat16 *__restrict wt_ping,
+                    const bfloat16 *__restrict wt_pong,
+                    const int32_t *__restrict act_ping,
+                    const int32_t *__restrict act_pong,
+                    int32_t *__restrict record_ping,
+                    int32_t *__restrict record_pong, int32_t record_header,
                     int32_t *record_toggle) {
   for (int32_t block = 0; block < Records; block++)
       chess_loop_range(Records, Records) {
@@ -170,8 +192,8 @@ run_projection_body(bfloat16 *wt_ping, bfloat16 *wt_pong, int32_t *act_ping,
       acquire_greater_equal(qwen3::kMainActivationFullCoreLock, 1);
       acquire_greater_equal(qwen3::kMainWeightFullCoreLock, 1);
 
-      bfloat16 *wt = (chunk & 1) == 0 ? wt_ping : wt_pong;
-      int32_t *act = (chunk & 1) == 0 ? act_ping : act_pong;
+      const bfloat16 *__restrict wt = (chunk & 1) == 0 ? wt_ping : wt_pong;
+      const int32_t *__restrict act = (chunk & 1) == 0 ? act_ping : act_pong;
       accum_q4nx_chunk(acc0, acc1, wt, act);
 
       release(qwen3::kMainActivationEmptyCoreLock, 1);

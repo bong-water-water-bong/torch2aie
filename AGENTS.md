@@ -134,6 +134,52 @@ experiment diary.
   model and improves Chess scheduling determinism. Do not collapse it back to
   dynamic `records/chunks_per_record` helpers just to reduce object size; first
   compare opcode density, PM size, and NPU time against the MyLM-style gates.
+- Do not replace MLIR memref arguments with raw local-address casts such as
+  `reinterpret_cast<T *>(0x2800)`. The Main16 buffers are pinned in MLIR, but
+  the external Chess object still relies on the memref pointers passed by the
+  generated core wrapper. A direct cast produced all-zero Main16 records on the
+  Q-only gate.
+- Do not assume that removing `record_toggle` is a win just because every
+  Main16 body has an even replay count. A body-local `block & 1` ping/pong
+  experiment stayed numerically correct but worsened the Main16 report
+  (`NOP_TOTAL 729 -> 731`) and Q-only latency (about `1261 us -> 1300 us`).
+- Do not manually expand Main16 chunk ping/pong pairs inside
+  `run_projection_body` just to remove `(chunk & 1)`. Chess duplicated the hot
+  loop body instead of making a tighter schedule: `object_bytes` grew about
+  `60 KiB -> 110 KiB`, `instruction_lines 1781 -> 3301`, and
+  `NOP_TOTAL 729 -> 1308`.
+- Do not merge the two Main16 lane scale/zero loads into one 32-row
+  scale/zero load plus `extract<16>()` unless a new report proves otherwise.
+  It reduced object size slightly but worsened scheduling (`NOP_TOTAL 729 ->
+  765`, software stalls `65 -> 71`) and slowed Q-only latency to about
+  `1404 us`.
+- For Main16 Q4NX, the profitable Chess shape is four activation dimensions per
+  weight load. Load 64 `uint4` lanes, unpack once to 64 `uint8` lanes, then call
+  `aie::to_float<bfloat16>(q8, 0)`. This reliably emits the AIE2P
+  `VUPS.4x ... x2d/dm` form seen in MyLM-like windows. A naive two-dimension
+  `uint8 -> to_float` also emits `VUPS.4X`, but it creates a poor schedule and
+  slowed Q-only to about `1484 us`.
+- Keep the Main16 four-dimension Q4 path even though it increases code size.
+  The verified quad path improved representative isolated gates from about
+  `1260 us -> 1133 us` for Q-only, `1674 us -> 1456 us` for Q/K/V, and
+  `9796 us -> 7082 us` for the full `12/8/48/8` Main16 record chain, with zero
+  numerical mismatches.
+- Do not pin Main16 `Acc16` accumulators with direct `chess_storage(dm*)`.
+  `aie::accum<accfloat,16>` maps to a 512-bit accumulator class, while `dm*`
+  storage is for larger accumulator/register shapes; Chess rejects the direct
+  qualifier. `aie::utils::locate_in_register<..., AIE_RegFile::Accum>` compiled
+  for low and high accumulator registers, but both slowed Q-only to about
+  `1425-1431 us` despite slightly fewer static NOPs.
+- Main16 opcode counts are necessary but insufficient. The faster quad path has
+  more static instructions and still spills, but it gives Chess the right
+  `VUPS.4x x2d/dm` dependency shape and wins on hardware. Continue optimizing
+  this path by shortening live ranges and reducing spills instead of reverting
+  to the smaller pair path.
+- Mark Main16 read-only weight and activation pointers as `const __restrict`
+  through the hot helpers. This does not change the MyLM ABI, but it gives Chess
+  better alias information; the quad path kept the same target opcode shape,
+  reduced role-object `NOP_TOTAL` from `713` to `695`, improved Q-only from
+  about `1113 us` to `1078 us`, and kept full-chain numerical validation clean.
 - Main16 isolated gates now cover the body chain directly:
   `kernel-main16-q4nx-run` checks Q-only, `kernel-main16-q4nx-qkv-run` checks
   the fused 12-record Q/K/V body, and `kernel-main16-q4nx-full-run` checks the
