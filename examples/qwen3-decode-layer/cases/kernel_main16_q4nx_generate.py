@@ -27,7 +27,11 @@ CASE_NAME = "qwen3-kernel-main16-q4nx"
 PROFILE_CASE_NAME = "qwen3-kernel-main16-q4nx-profile"
 MAIN16_OBJECT = "main_projection_q4nx_fast.o"
 MAIN16_PROFILE_OBJECT = "main_projection_q4nx_profile.o"
+MAIN16_RECORD_CELL_ONE_RECORD_OBJECT = "main_projection_q4nx_acc32_one_record.o"
+MAIN16_RECORD_CELL_STATIC_BODY_OBJECT = "main_projection_q4nx_acc32_static.o"
 MAIN16_PROFILE_SCHEDULER = "q4nx_main16_cycle_profile_scheduler"
+MAIN16_RECORD_CELL_ONE_RECORD_SCHEDULER = "q4nx_main16_record_cell_one_record_scheduler"
+MAIN16_RECORD_CELL_STATIC_BODY_SCHEDULER = "q4nx_main16_record_cell_static_body_scheduler"
 PHASE_LIMIT_Q_ONLY = 1
 
 
@@ -48,6 +52,8 @@ class ModeSpec:
     name: str
     phase_limit: int
     plans: tuple[BodyPlan, ...]
+    scheduler: str = full.MAIN16_LAYER_SCHEDULER
+    object_name: str = MAIN16_OBJECT
 
     @property
     def record_count(self) -> int:
@@ -76,16 +82,42 @@ QKV_PLANS = (
     BodyPlan("k", KV_BODY_RECORDS, K_CHUNKS_PER_RECORD, 0x1),
     BodyPlan("v", KV_BODY_RECORDS, V_CHUNKS_PER_RECORD, 0x1),
 )
+STATIC_QKV_PLAN = BodyPlan(
+    "qkv-static",
+    Q_BODY_RECORDS + KV_BODY_RECORDS + KV_BODY_RECORDS,
+    Q_CHUNKS_PER_RECORD,
+    0x1,
+)
 FULL_CHAIN_PLANS = QKV_PLANS + (
     BodyPlan("o", O_BODY_RECORDS, O_CHUNKS_PER_RECORD, 0x4),
     BodyPlan("upgate", UPGATE_REPLAYS, UPGATE_CHUNKS_PER_REPLAY, 0x8),
     BodyPlan("down", DOWN_BODY_RECORDS, DOWN_CHUNKS, 0x4),
+)
+STATIC_FULL_CHAIN_PLANS = (
+    STATIC_QKV_PLAN,
+    BodyPlan("o-static", O_BODY_RECORDS, O_CHUNKS_PER_RECORD, 0x4),
+    BodyPlan("upgate-static", UPGATE_REPLAYS, UPGATE_CHUNKS_PER_REPLAY, 0x8),
+    BodyPlan("down-static", DOWN_BODY_RECORDS, DOWN_CHUNKS, 0x4),
 )
 
 MODE_SPECS = {
     "q": ModeSpec("q", PHASE_LIMIT_Q_ONLY, (Q_ONLY_PLAN,)),
     "qkv": ModeSpec("qkv", full.MAIN16_PHASE_LIMIT_QKV, QKV_PLANS),
     "full": ModeSpec("full", full.MAIN16_PHASE_LIMIT_FULL, FULL_CHAIN_PLANS),
+    "acc32-one-record": ModeSpec(
+        "acc32-one-record",
+        PHASE_LIMIT_Q_ONLY,
+        (BodyPlan("acc32-one-record", 1, Q_CHUNKS_PER_RECORD, 0x1),),
+        MAIN16_RECORD_CELL_ONE_RECORD_SCHEDULER,
+        MAIN16_RECORD_CELL_ONE_RECORD_OBJECT,
+    ),
+    "acc32-static": ModeSpec(
+        "acc32-static",
+        full.MAIN16_PHASE_LIMIT_FULL,
+        STATIC_FULL_CHAIN_PLANS,
+        MAIN16_RECORD_CELL_STATIC_BODY_SCHEDULER,
+        MAIN16_RECORD_CELL_STATIC_BODY_OBJECT,
+    ),
 }
 
 TOTAL_Q_CHUNKS = MODE_SPECS["q"].total_chunks
@@ -199,8 +231,8 @@ def generate_mlir(mode: str = "q", profile_cycles: bool = False) -> str:
     spec = mode_spec(mode)
     experiment_dir = Path(__file__).parent.parent.resolve()
     case_name = case_name_for(mode, profile_cycles=profile_cycles)
-    scheduler = MAIN16_PROFILE_SCHEDULER if profile_cycles else full.MAIN16_LAYER_SCHEDULER
-    object_name = MAIN16_PROFILE_OBJECT if profile_cycles else MAIN16_OBJECT
+    scheduler = MAIN16_PROFILE_SCHEDULER if profile_cycles else spec.scheduler
+    object_name = MAIN16_PROFILE_OBJECT if profile_cycles else spec.object_name
     return f"""module {{
   aie.device(npu2) {{
     %shim = aie.tile(2, 0)
@@ -223,10 +255,11 @@ def generate_mlir(mode: str = "q", profile_cycles: bool = False) -> str:
 def validate_generated_mlir(mlir: str, mode: str = "q", profile_cycles: bool = False) -> list[str]:
     spec = mode_spec(mode)
     case_name = case_name_for(mode, profile_cycles=profile_cycles)
-    scheduler = MAIN16_PROFILE_SCHEDULER if profile_cycles else full.MAIN16_LAYER_SCHEDULER
+    scheduler = MAIN16_PROFILE_SCHEDULER if profile_cycles else spec.scheduler
     required = (
         f"case marker {case_name}",
         scheduler,
+        spec.object_name if not profile_cycles else MAIN16_PROFILE_OBJECT,
         f"memref<{spec.activation_input_dwords}xi32>",
         f"memref<{spec.weight_input_dwords}xi32>",
         f"memref<{spec.record_output_dwords}xi32>",

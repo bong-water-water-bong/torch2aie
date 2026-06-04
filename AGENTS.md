@@ -309,6 +309,24 @@ experiment diary.
   This is a stronger 8-group replacement candidate than the older exact/mac32
   single-lane body because it keeps one 32-row accumulator state and avoids
   stack spill.
+- The production ABI acc32 record-cell gate should stay in its own role objects:
+  `main_projection_q4nx_acc32_one_record.o` for the 1-record gate and
+  `main_projection_q4nx_acc32_static.o` for the static `12/8/48/8` body. Do not
+  put these externs into `main_projection_q4nx_fast.o`; compiling the static
+  acc32 body together with the old scheduler makes xchesscc spend minutes on a
+  much larger object.
+- For the current production ABI acc32 gate, keep the 8 Q4 groups inside a
+  fixed `chess_loop_range(8, 8)` loop and keep `accum_q4nx_chunk_acc32`
+  `noinline`. A recursive group template plus chunk-inline record loop produced
+  a 159 KiB one-record object and PM overflow. A looped group body with noinline
+  chunk compiles to about 28 KiB for one-record and 39 KiB for static full, and
+  passes strict NPU gates. Re-inlining the chunk after this reduction still
+  overflows PM for the static `12/8/48/8` body.
+- The acc32 production ABI gate is a correctness/scheduling baseline, not a
+  speed replacement yet. Current representative isolated timings are about
+  `674 us` for `acc32-one-record` and `13.2-13.5 ms` for `acc32-static`, both
+  with zero mismatches. The existing quad-path production `full` gate is still
+  faster at about `7.1 ms`.
 - Do not try to fake MyLM accumulator quadrants with C++ `v8accfloat`
   extract/insert. The acc8 probe made the schedule worse (`VMOV=722`,
   `VST=73`, `[sp]=253`). MyLM's cell schedule uses instruction-level

@@ -178,6 +178,22 @@ kernel-main16-q4nx-full-run:
 kernel-main16-q4nx-full-build:
 	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode full --build-only
 
+.PHONY: kernel-main16-q4nx-acc32-one-record-run
+kernel-main16-q4nx-acc32-one-record-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode acc32-one-record
+
+.PHONY: kernel-main16-q4nx-acc32-one-record-build
+kernel-main16-q4nx-acc32-one-record-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode acc32-one-record --build-only
+
+.PHONY: kernel-main16-q4nx-acc32-static-run
+kernel-main16-q4nx-acc32-static-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode acc32-static
+
+.PHONY: kernel-main16-q4nx-acc32-static-build
+kernel-main16-q4nx-acc32-static-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode acc32-static --build-only
+
 .PHONY: kernel-main16-q4nx-bounded-run
 kernel-main16-q4nx-bounded-run:
 	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 2

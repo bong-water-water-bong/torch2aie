@@ -69,6 +69,14 @@ ROLE_KERNEL_SOURCES = {
         "probes/main16_q4nx_record_cell_acc32_probe.cc",
     ),
     "main_projection_q4nx_fast.o": (MAIN16_KERNEL_SOURCE,),
+    "main_projection_q4nx_acc32_one_record.o": (
+        "qwen3_decode_kernels_acc32_one_record.cc",
+        "qwen3_decode_kernels_acc32_impl.h",
+    ),
+    "main_projection_q4nx_acc32_static.o": (
+        "qwen3_decode_kernels_acc32_static.cc",
+        "qwen3_decode_kernels_acc32_impl.h",
+    ),
     "main_projection_q4nx_profile.o": ("qwen3_decode_kernels_profile.cc", "qwen3_decode_kernels.cc"),
     "postprocess_qkv.o": (POSTPROCESS_QKV_SOURCE,),
     "swiglu.o": (SWIGLU_SOURCE,),
