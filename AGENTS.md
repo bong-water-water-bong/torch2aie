@@ -98,6 +98,10 @@ experiment diary.
 - `aie::store_unaligned_v` is only for genuinely unaligned destinations. For
   c1r2 residual/down, hidden/output block bases are 32-byte aligned, so keep
   `store_v` there and fix only the compact payload read side.
+- Main16 compact record payload starts at `record_words + 1`, i.e. only
+  2-bf16 aligned. Use `aie::store_unaligned_v<16>(payload, vec, 2)` for the two
+  payload stores. A normal `v16bfloat16 *` store to this address aligns down and
+  overwrites the header on hardware.
 - For matmul tiles, reuse the local `aie::mmul` template shapes before inventing
   a new microkernel. Current bf16 AIE2P emulation uses 8x8x8 shapes.
 
@@ -180,6 +184,142 @@ experiment diary.
   better alias information; the quad path kept the same target opcode shape,
   reduced role-object `NOP_TOTAL` from `713` to `695`, improved Q-only from
   about `1113 us` to `1078 us`, and kept full-chain numerical validation clean.
+- Do not change the Q4NX oracle or dequant algebra unless MyLM reverse evidence
+  supports the same semantic change. A group-fused rewrite such as accumulating
+  `sum(q * act)` and applying `scale/zero` once per group is not currently
+  MyLM-proven and should stay out of production gates.
+- Cross-group register carry is feasible in Chess C++ when the live state is
+  small and inline. The useful granularity is not a full C++ group object: MyLM
+  carries half-registers, accumulator cells, and pointer/scalar cells across
+  `fill -> steady -> drain` boundaries.
+- Mixed half-register operands need lower-level Chess C++ intrinsics. High-level
+  AIE API does not directly expose the MyLM operand shape, but constructing
+  `aie::vector<bf16,32>` halves and feeding them to `mac_elem_16_conf` can emit
+  `VMOV wl*/wh*` followed by `VMAC.f` without stack spill. This is still Chess
+  C++, not raw asm.
+- `VUPS.4X` placement matters. The target schedule keeps
+  `VUPS.4X -> VADD/VSUB -> VCONV/VMAC` close together; advancing all unpack/
+  upshift work too early lengthens live ranges and invites spill/NOPs.
+- Do not directly replace production Main16 group loops with full static
+  `aie::unroll_for` quad bodies. A production experiment that changed only the
+  inner group steady loop from `aie::pipelined_loop` to `aie::unroll_for`
+  caused xchesscc to run for more than five minutes at very low CPU without
+  producing an object. The useful direction is a bounded local window or
+  separate small body, not dumping full exact static expansion into the complete
+  Main16 role object.
+- `aie::pipelined_loops` can express a front/back peeled
+  `load q(i+1) -> MAC q(i)` window without stack spill, and the probe compiles
+  to a normal loop with `VUPS.4X`/`VMAC.F`. However, replacing the production
+  inner group loop with that form did not improve the role-object report
+  (`object_bytes 72148`, `NOP_TOTAL 695`, `software_stalls 82` unchanged) and
+  slowed Q-only isolated latency to about `1136 us` versus the current
+  `~1078 us` baseline. Keep it as a reference shape, not the default production
+  implementation.
+- MyLM's cross-group Q4NX pipeline is a cell-level state machine, not a
+  C++-level `Vec64 q_current` or group helper pipeline. Reverse artifacts show
+  steady-to-steady boundaries with 27 data cells and 12 pointer/scalar cells,
+  with mixed vector halves and accumulator quadrants crossing group boundaries.
+  Optimizing toward MyLM means preserving half-register / accumulator-cell
+  liveness and instruction order, especially around `VUPS.4X -> VADD/VSUB ->
+  VCONV/VMAC`.
+- AIE API Q4 unpack/expand in this context may lower to `VLDB.UNPACK` plus
+  `VUPS.4X`, not a standalone `VUNPACK`. When comparing to MyLM counts, inspect
+  the actual `.lst` instruction form and bundle position, not only substring
+  counters.
+- Do not model MyLM's 27 data cells as one wide C++ struct. Wide synthetic
+  state spills immediately; smaller state plus separators can cap live range,
+  but separators also increase NOPs. The production route must keep the state
+  small enough that the compiler never roundtrips it through stack/scratch.
+- Simple lane-order rewrites are not the route. Dual-lane interleave, serial
+  lane processing, and activation reload variants reduce or move register
+  pressure but do not recover MyLM density. Optimize half-cell lifetime and MAC
+  operand construction instead.
+- `mac_elem_16_conf(v32bf16, v32bf16, v16accfloat, ...)` consumes the low half in
+  this Q4NX layout. `zero_acc/sub_mul/sub_acc` only affect accumulator/product
+  sign or zeroing; they do not select the high half. The verified pair route is
+  `mac_elem_32_conf(pack(lo, hi), pack(act0, act1), zero32, ...)`, followed by
+  sequentially adding `extract_v16accfloat(products, 0)` and
+  `extract_v16accfloat(products, 1)` back into the `v16accfloat` accumulator.
+  This preserves the exact oracle for bounded 2g/3g/8g tests, but Chess emits
+  `mac_elem_32_add_rewrite_rule_s1` source-mismatch warnings that should be
+  treated as a compiler-risk note.
+- The current positive exact routes are:
+  `main16-q4nx-exact-bounded-window-probe` for single-lane 2/3-group windows,
+  `main16-q4nx-exact-bounded-window-mac32-probe` for the 2/3-group folded pair
+  form, and `main16-q4nx-exact-8group-mac32-probe` for the full 8-group isolated
+  body. All keep explicit `q/scale/offset/acc` cells, immediate `VUPS.4X`
+  consumption, and exact dequant rounding points (`mul -> bf16 -> add offset`).
+- The verified bounded exact window now has both `.lst` and real NPU evidence.
+  It compiles with no ordinary `VST` and no `[sp]` references, and
+  `kernel-main16-q4nx-bounded-run` / `kernel-main16-q4nx-bounded-3g-run` pass
+  strict integer-word compares against the sequential exact Q4NX oracle. Function
+  counts for the verified single-dim native-MAC form:
+  `2g: VUPS.4X=16, VLDB.UNPACK=16, VMAC.F=64, VCONV=224, NOPX=541`;
+  `3g: VUPS.4X=24, VLDB.UNPACK=24, VMAC.F=96, VCONV=336, NOPX=807`.
+- The `mac32-fold` bounded form also passes strict NPU gates:
+  `kernel-main16-q4nx-bounded-mac32-run` (2g, 0 mismatches, ~541.5 us),
+  `kernel-main16-q4nx-bounded-mac32-3g-run` (3g, 0 mismatches, ~616.3 us), and
+  `kernel-main16-q4nx-bounded-mac32-8g-run` (8g, 0 mismatches, ~596.3 us). Its
+  native 8g `.lst` has `VST=0`, `[sp]=0`, `VMAC.F=128`, `VADDMAC.F=128`,
+  `VCONV=640`, `NOPX=1013`. The single 8g exact form also has `VST=0` and
+  `[sp]=0`, but fails xclbin CDO generation with program-memory overflow
+  (`VMAC.F=256`, `VCONV=896`, `NOPX=2133`), so 8g production-adjacent work must
+  use a denser form or split the body.
+- Treat the bounded exact window as the production-adjacent proof, not a drop-in
+  replacement yet. It preserves Q4 dequant algebra and has isolated numeric
+  gates. The two-lane bounded body is only a layout/oracle diagnostic, not the
+  MyLM performance model. MyLM emits one 17-dword record with two 16-bf16
+  payload stores, but its hot loop is one cell-level state transformer, not two
+  independent `ExactWindowState` objects kept live at once.
+- Do not optimize Main16 by interleaving two complete lane states in one Chess
+  function. The 2g interleaved dual-lane probe generated stack/scratch traffic
+  (`VST=29`, `[sp] refs=60`), and larger 3g/8g versions made Chess backend
+  compile times explode. The sequential dual-lane diagnostic keeps only one
+  state live at a time, compiles with `VST=0` and `[sp]=0`, and passes the
+  strict 2g NPU oracle (`kernel-main16-q4nx-dual-lane-run`, 0 mismatches,
+  about `680 us`), but it is deliberately not a speed target.
+- The next Main16 optimization target is a single-record, two-payload,
+  cell-level fused schedule: keep the MyLM record ABI (`header + payload0 +
+  payload1`) while expressing the `fill -> fill_to_steady ->
+  steady_to_steady -> pre_drain -> drain` state contract at half-register and
+  accumulator-cell granularity.
+- The MyLM record ABI itself is not the spill source. A true 17-dword
+  sequential record probe that writes `header + payload0 + payload1` but keeps
+  only one lane accumulator live at a time compiled cleanly:
+  `VST=0`, `[sp]=0`, `NOPX=593`. This is a layout/oracle diagnostic only, not a
+  performance model.
+- Do not express the MyLM single-record hot body as two full payload
+  accumulators live throughout C++ helper calls. The concurrent record-cell
+  probe spills: mac32-fold gave `VST=20`, `[sp]=142`, `NOPX=1046`; the mac16
+  variant reduced pressure but still spilled (`VST=12`, `[sp]=58`,
+  `NOPX=838`). This proves the C++ object lifetime is too wide even though the
+  ABI shape is correct.
+- A single `v32accfloat` record accumulator is the current best
+  production-adjacent Main16 record-cell abstraction. It represents the full
+  32-row record payload as one accumulator state and only splits into two
+  16-bf16 payload stores at the end. The acc32 probe compiles with no stack
+  traffic (`[sp]=0`), no ordinary spill store (`VST=4`, from the two unaligned
+  payload stores), and a much smaller schedule than the concurrent two-acc
+  forms: `VMAC.F=64`, `VCONV=321`, `VMOV=195`, `NOPX=689`. It also passes the
+  real NPU strict record oracle (`kernel-main16-q4nx-record-cell-run`, one
+  17-dword record, 0 mismatches, about `599-658 us` on this machine).
+- The acc32 record-cell shape scales to an 8-group native window without stack
+  traffic: `VUPS.4X=128`, `VLDB.UNPACK=128`, `VEXTBCST.16=256`,
+  `VMAC.F=256`, `VCONV=1281`, `VMOV=772`, `VST=4`, `NOPX=2781`, `[sp]=0`.
+  This is a stronger 8-group replacement candidate than the older exact/mac32
+  single-lane body because it keeps one 32-row accumulator state and avoids
+  stack spill.
+- Do not try to fake MyLM accumulator quadrants with C++ `v8accfloat`
+  extract/insert. The acc8 probe made the schedule worse (`VMOV=722`,
+  `VST=73`, `[sp]=253`). MyLM's cell schedule uses instruction-level
+  `vmov bm*` cell transfer; AIE API v8 accumulator objects are not a free
+  representation of that.
+- Do not use repeated `aie::utils::locate_in_register` or direct
+  `chess_storage(bm*)` pinning to rescue the concurrent record-cell body.
+  Those variants made Chess backend scheduling run for more than 90 seconds
+  without a useful report and were killed. Pinning can help GEMM-like fixed
+  register shapes, but here it fights the too-wide C++ lifetime instead of
+  fixing it.
 - Main16 isolated gates now cover the body chain directly:
   `kernel-main16-q4nx-run` checks Q-only, `kernel-main16-q4nx-qkv-run` checks
   the fused 12-record Q/K/V body, and `kernel-main16-q4nx-full-run` checks the

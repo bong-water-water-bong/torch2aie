@@ -178,6 +178,86 @@ kernel-main16-q4nx-full-run:
 kernel-main16-q4nx-full-build:
 	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode full --build-only
 
+.PHONY: kernel-main16-q4nx-bounded-run
+kernel-main16-q4nx-bounded-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 2
+
+.PHONY: kernel-main16-q4nx-bounded-build
+kernel-main16-q4nx-bounded-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 2 --build-only
+
+.PHONY: kernel-main16-q4nx-bounded-3g-run
+kernel-main16-q4nx-bounded-3g-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 3
+
+.PHONY: kernel-main16-q4nx-bounded-3g-build
+kernel-main16-q4nx-bounded-3g-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 3 --build-only
+
+.PHONY: kernel-main16-q4nx-bounded-8g-run
+kernel-main16-q4nx-bounded-8g-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 8
+
+.PHONY: kernel-main16-q4nx-bounded-8g-build
+kernel-main16-q4nx-bounded-8g-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 8 --build-only
+
+.PHONY: kernel-main16-q4nx-bounded-mac32-run
+kernel-main16-q4nx-bounded-mac32-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 2 --mac-style mac32-fold
+
+.PHONY: kernel-main16-q4nx-bounded-mac32-build
+kernel-main16-q4nx-bounded-mac32-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 2 --mac-style mac32-fold --build-only
+
+.PHONY: kernel-main16-q4nx-bounded-mac32-3g-run
+kernel-main16-q4nx-bounded-mac32-3g-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 3 --mac-style mac32-fold
+
+.PHONY: kernel-main16-q4nx-bounded-mac32-3g-build
+kernel-main16-q4nx-bounded-mac32-3g-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 3 --mac-style mac32-fold --build-only
+
+.PHONY: kernel-main16-q4nx-bounded-mac32-8g-run
+kernel-main16-q4nx-bounded-mac32-8g-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 8 --mac-style mac32-fold
+
+.PHONY: kernel-main16-q4nx-bounded-mac32-8g-build
+kernel-main16-q4nx-bounded-mac32-8g-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --groups 8 --mac-style mac32-fold --build-only
+
+.PHONY: kernel-main16-q4nx-dual-lane-run
+kernel-main16-q4nx-dual-lane-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_dual_lane.py --groups 2
+
+.PHONY: kernel-main16-q4nx-dual-lane-build
+kernel-main16-q4nx-dual-lane-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_dual_lane.py --groups 2 --build-only
+
+.PHONY: kernel-main16-q4nx-dual-lane-3g-run
+kernel-main16-q4nx-dual-lane-3g-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_dual_lane.py --groups 3
+
+.PHONY: kernel-main16-q4nx-dual-lane-3g-build
+kernel-main16-q4nx-dual-lane-3g-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_dual_lane.py --groups 3 --build-only
+
+.PHONY: kernel-main16-q4nx-record-cell-run
+kernel-main16-q4nx-record-cell-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_record_cell.py
+
+.PHONY: kernel-main16-q4nx-record-cell-build
+kernel-main16-q4nx-record-cell-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_record_cell.py --build-only
+
+.PHONY: kernel-main16-mac-elem-matrix-run
+kernel-main16-mac-elem-matrix-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_mac_elem_matrix.py
+
+.PHONY: kernel-main16-mac-elem-matrix-build
+kernel-main16-mac-elem-matrix-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_mac_elem_matrix.py --build-only
+
 .PHONY: kernel-main16-q4nx-profile-run
 kernel-main16-q4nx-profile-run:
 	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --profile-cycles
@@ -231,6 +311,264 @@ full-vector-add-probe:
 	done
 	@strings build/native-probe/full_vector_add_probe.o.lst | \
 	  grep -Ein "full_vector_add|begin_of_loop|end_of_loop|VCONV|VADD\\.F|VLDA|VLDB|VST|VMUL\\.F" | head -120
+
+.PHONY: main16-q4nx-exact-bounded-window-probe
+main16-q4nx-exact-bounded-window-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_exact_bounded_window_probe.cc \
+	  -o build/native-probe/main16_q4nx_exact_bounded_window_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_exact_bounded_window_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_exact_bounded_window_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_exact_bounded_window_probe.o.lst | \
+	  grep -Ein "main16_q4nx_exact_bounded|VUPS\\.4x|VLDB\\.UNPACK|VUNPACK|VEXTBCST\\.16|VMAC\\.f|VCONV\\.bf16\\.fp32|VADD\\.f|VMUL\\.f|VST|ST\\.|VLDA|VLDB|VMOV|NOP" | head -320
+
+.PHONY: main16-q4nx-exact-bounded-window-mac32-probe
+main16-q4nx-exact-bounded-window-mac32-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_exact_bounded_window_mac32_probe.cc \
+	  -o build/native-probe/main16_q4nx_exact_bounded_window_mac32_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_exact_bounded_window_mac32_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_exact_bounded_window_mac32_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_exact_bounded_window_mac32_probe.o.lst | \
+	  grep -Ein "main16_q4nx_exact_bounded|VUPS\\.4x|VLDB\\.UNPACK|VUNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD\\.f|VMUL\\.f|VST|ST\\.|VLDA|VLDB|VMOV|NOP" | head -320
+
+.PHONY: main16-q4nx-exact-8group-probe
+main16-q4nx-exact-8group-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_exact_8group_probe.cc \
+	  -o build/native-probe/main16_q4nx_exact_8group_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_exact_8group_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_exact_8group_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-exact-8group-mac32-probe
+main16-q4nx-exact-8group-mac32-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_exact_8group_mac32_probe.cc \
+	  -o build/native-probe/main16_q4nx_exact_8group_mac32_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_exact_8group_mac32_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_exact_8group_mac32_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-exact-8group-dual-mac32-probe
+main16-q4nx-exact-8group-dual-mac32-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_exact_8group_dual_mac32_probe.cc \
+	  -o build/native-probe/main16_q4nx_exact_8group_dual_mac32_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_exact_8group_dual_mac32_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_exact_8group_dual_mac32_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-exact-bounded-dual-mac32-probe
+main16-q4nx-exact-bounded-dual-mac32-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_exact_bounded_dual_2g_mac32_probe.cc \
+	  -o build/native-probe/main16_q4nx_exact_bounded_dual_2g_mac32_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_exact_bounded_dual_2g_mac32_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_exact_bounded_dual_2g_mac32_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-exact-bounded-dual-3g-mac32-probe
+main16-q4nx-exact-bounded-dual-3g-mac32-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_exact_bounded_dual_3g_mac32_probe.cc \
+	  -o build/native-probe/main16_q4nx_exact_bounded_dual_3g_mac32_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_exact_bounded_dual_3g_mac32_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_exact_bounded_dual_3g_mac32_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-record-cell-probe
+main16-q4nx-record-cell-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_record_cell_probe.cc \
+	  -o build/native-probe/main16_q4nx_record_cell_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_record_cell_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_record_cell_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-record-cell-sequential-probe
+main16-q4nx-record-cell-sequential-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_record_cell_sequential_probe.cc \
+	  -o build/native-probe/main16_q4nx_record_cell_sequential_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_record_cell_sequential_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_record_cell_sequential_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-record-cell-mac16-probe
+main16-q4nx-record-cell-mac16-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_record_cell_mac16_probe.cc \
+	  -o build/native-probe/main16_q4nx_record_cell_mac16_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_record_cell_mac16_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_record_cell_mac16_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-record-cell-acc32-probe
+main16-q4nx-record-cell-acc32-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_record_cell_acc32_probe.cc \
+	  -o build/native-probe/main16_q4nx_record_cell_acc32_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_record_cell_acc32_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_record_cell_acc32_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-record-cell-8g-acc32-probe
+main16-q4nx-record-cell-8g-acc32-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_record_cell_8g_acc32_probe.cc \
+	  -o build/native-probe/main16_q4nx_record_cell_8g_acc32_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_record_cell_8g_acc32_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_record_cell_8g_acc32_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-q4nx-record-cell-acc8-probe
+main16-q4nx-record-cell-acc8-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_record_cell_acc8_probe.cc \
+	  -o build/native-probe/main16_q4nx_record_cell_acc8_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_record_cell_acc8_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_record_cell_acc8_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+
+.PHONY: main16-mac-elem-matrix-probe
+main16-mac-elem-matrix-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_mac_elem_matrix_probe.cc \
+	  -o build/native-probe/main16_mac_elem_matrix_probe.o
+	@for op in VEXTBCST.16 VMAC.F VCONV.BF16.FP32 VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_mac_elem_matrix_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_mac_elem_matrix_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_mac_elem_matrix_probe.o.lst | \
+	  grep -Ein "main16_mac_elem_matrix|VMAC\\.f|VCONV\\.bf16\\.fp32|VST|ST\\.|VLDA|VLDB|VMOV|NOP" | head -220
 
 .PHONY: clean
 clean:
