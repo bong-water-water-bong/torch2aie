@@ -566,6 +566,90 @@ main16-q4nx-record-cell-acc8-probe:
 	@printf '%-18s ' "[sp] refs"; \
 	  strings build/native-probe/main16_q4nx_record_cell_acc8_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
 
+.PHONY: main16-q4nx-cell-state-carry-probe
+main16-q4nx-cell-state-carry-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_cell_state_carry_probe.cc \
+	  -o build/native-probe/main16_q4nx_cell_state_carry_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_cell_state_carry_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_cell_state_carry_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_cell_state_carry_probe.o.lst | \
+	  grep -Ein "main16_q4nx_cell_state|VUPS\\.4x|VLDB\\.UNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -260
+
+.PHONY: main16-q4nx-section-cell-probe
+main16-q4nx-section-cell-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -DMAIN16_SECTION_CELL_GROUPS=8 \
+	  -DMAIN16_SECTION_CELL_MIXED=1 \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_section_cell_probe.cc \
+	  -o build/native-probe/main16_q4nx_section_cell_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_section_cell_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_section_cell_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_section_cell_probe.o.lst | \
+	  grep -Ein "main16_q4nx_section_cell|VUPS\\.4x|VLDB\\.UNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -320
+
+.PHONY: main16-q4nx-cell-state-carry-3acc-probe
+main16-q4nx-cell-state-carry-3acc-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -DMAIN16_CELL_STATE_ACCUMS=3 \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_cell_state_carry_probe.cc \
+	  -o build/native-probe/main16_q4nx_cell_state_carry_3acc_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_cell_state_carry_3acc_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_cell_state_carry_3acc_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_cell_state_carry_3acc_probe.o.lst | \
+	  grep -Ein "main16_q4nx_cell_state|VUPS\\.4x|VLDB\\.UNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -260
+
+.PHONY: main16-q4nx-cell-state-carry-2acc-probe
+main16-q4nx-cell-state-carry-2acc-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -DMAIN16_CELL_STATE_ACCUMS=2 \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_cell_state_carry_probe.cc \
+	  -o build/native-probe/main16_q4nx_cell_state_carry_2acc_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_cell_state_carry_2acc_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_cell_state_carry_2acc_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_cell_state_carry_2acc_probe.o.lst | \
+	  grep -Ein "main16_q4nx_cell_state|VUPS\\.4x|VLDB\\.UNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -260
+
 .PHONY: main16-mac-elem-matrix-probe
 main16-mac-elem-matrix-probe:
 	mkdir -p build/native-probe

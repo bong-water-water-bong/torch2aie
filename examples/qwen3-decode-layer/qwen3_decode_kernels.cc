@@ -174,7 +174,9 @@ emit_cycle_record(Acc16 &acc0, Acc16 &acc1, int32_t *record, int32_t block,
 #endif
 
 template <int32_t Records, int32_t ChunksPerRecord>
-__attribute__((always_inline)) static inline void
+// Keep phase bodies out of the dispatcher so Chess does not merge all phase
+// schedules into one larger program-memory footprint.
+__attribute__((noinline)) static void
 run_projection_body(const bfloat16 *__restrict wt_ping,
                     const bfloat16 *__restrict wt_pong,
                     const int32_t *__restrict act_ping,
