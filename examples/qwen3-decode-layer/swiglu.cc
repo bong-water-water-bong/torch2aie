@@ -3,48 +3,37 @@
 
 namespace {
 
-static float abs_f32(float value) {
-    return value < 0.0f ? -value : value;
-}
+constexpr int32_t kSwigluLanes = 512;
+constexpr int32_t kMylmSwigluSegments = 64;
 
-constexpr int32_t sigmoid_table_last = 64;
-constexpr float sigmoid_table_scale = 8.0f;
-static const float sigmoid_table[sigmoid_table_last + 1] = {
-    0.5000000000f, 0.5312093734f, 0.5621765009f, 0.5926666000f, 0.6224593312f,
-    0.6513548647f, 0.6791786992f, 0.7057850278f, 0.7310585786f, 0.7549149869f,
-    0.7772998612f, 0.7981867777f, 0.8175744762f, 0.8354835371f, 0.8519528020f,
-    0.8670357598f, 0.8807970780f, 0.8933094061f, 0.9046505351f, 0.9149009550f,
-    0.9241418200f, 0.9324533089f, 0.9399133498f, 0.9465966702f, 0.9525741268f,
-    0.9579122721f, 0.9626731127f, 0.9669140216f, 0.9706877692f, 0.9740426428f,
-    0.9770226301f, 0.9796676467f, 0.9820137900f, 0.9840936083f, 0.9859363730f,
-    0.9875683491f, 0.9890130574f, 0.9902915235f, 0.9914225146f, 0.9924227587f,
-    0.9933071491f, 0.9940889311f, 0.9947798743f, 0.9953904278f, 0.9959298623f,
-    0.9964063974f, 0.9968273172f, 0.9971990730f, 0.9975273768f, 0.9978172836f,
-    0.9980732653f, 0.9982992776f, 0.9984988177f, 0.9986749776f, 0.9988304897f,
-    0.9989677690f, 0.9990889488f, 0.9991959141f, 0.9992903296f, 0.9993736658f,
-    0.9994472214f, 0.9995121429f, 0.9995694429f, 0.9996200155f, 0.9996646499f
+#define SWIGLU_LUT_QUAD(s0, o0, s1, o1, s2, o2, s3, o3) \
+    s0, o0, s1, o1, s2, o2, s3, o3, s0, o0, s1, o1, s2, o2, s3, o3
+#define SWIGLU_LINEAR_APPROX_LUT_VALUES \
+    SWIGLU_LUT_QUAD(-0.0000000000e+00f, -0.0000000000e+00f, -8.0871582031e-04f, -2.8416510671e-02f, -9.9945068359e-04f, -3.4123960882e-02f, -1.2359619141e-03f, -4.0880300105e-02f), \
+    SWIGLU_LUT_QUAD(-1.5182495117e-03f, -4.8848759383e-02f, -1.8615722656e-03f, -5.8208428323e-02f, -2.2888183594e-03f, -6.9152273238e-02f, -2.7923583984e-03f, -8.1883266568e-02f), \
+    SWIGLU_LUT_QUAD(-3.4027099609e-03f, -9.6608236432e-02f, -4.1503906250e-03f, -1.1352804303e-01f, -5.0048828125e-03f, -1.3282361627e-01f, -6.0729980469e-03f, -1.5463614464e-01f), \
+    SWIGLU_LUT_QUAD(-7.2937011719e-03f, -1.7904028296e-01f, -8.7280273438e-03f, -2.0600858331e-01f, -1.0314941406e-02f, -2.3536635935e-01f, -1.2145996094e-02f, -2.6673564315e-01f), \
+    SWIGLU_LUT_QUAD(-1.4221191406e-02f, -2.9946959019e-01f, -1.6479492188e-02f, -3.3258017898e-01f, -1.8676757812e-02f, -3.6466687918e-01f, -2.0996093750e-02f, -3.9386045933e-01f), \
+    SWIGLU_LUT_QUAD(-2.2949218750e-02f, -4.1780564189e-01f, -2.4414062500e-02f, -4.3371707201e-01f, -2.4902343750e-02f, -4.3855389953e-01f, -2.3925781250e-02f, -4.2936223745e-01f), \
+    SWIGLU_LUT_QUAD(-2.0629882812e-02f, -4.0381985903e-01f, -1.4526367188e-02f, -3.6097243428e-01f, -4.7302246094e-03f, -3.0205962062e-01f, 9.4604492188e-03f, -2.3120641708e-01f), \
+    SWIGLU_LUT_QUAD(2.8320312500e-02f, -1.5563963354e-01f, 5.1757812500e-02f, -8.5079051554e-02f, 7.9101562500e-02f, -3.0141420662e-02f, 1.0937500000e-01f, 0.0000000000e+00f), \
+    SWIGLU_LUT_QUAD(1.4062500000e-01f, 0.0000000000e+00f, 1.7089843750e-01f, -3.0141420662e-02f, 1.9824218750e-01f, -8.5079051554e-02f, 2.2167968750e-01f, -1.5563963354e-01f), \
+    SWIGLU_LUT_QUAD(2.4023437500e-01f, -2.3120641708e-01f, 2.5390625000e-01f, -3.0205962062e-01f, 2.6367187500e-01f, -3.6097243428e-01f, 2.7148437500e-01f, -4.0381985903e-01f), \
+    SWIGLU_LUT_QUAD(2.7343750000e-01f, -4.2936223745e-01f, 2.7539062500e-01f, -4.3855389953e-01f, 2.7343750000e-01f, -4.3371707201e-01f, 2.7343750000e-01f, -4.1780564189e-01f), \
+    SWIGLU_LUT_QUAD(2.7148437500e-01f, -3.9386045933e-01f, 2.6953125000e-01f, -3.6466687918e-01f, 2.6562500000e-01f, -3.3258017898e-01f, 2.6367187500e-01f, -2.9946959019e-01f), \
+    SWIGLU_LUT_QUAD(2.6171875000e-01f, -2.6673564315e-01f, 2.5976562500e-01f, -2.3536635935e-01f, 2.5781250000e-01f, -2.0600858331e-01f, 2.5781250000e-01f, -1.7904028296e-01f), \
+    SWIGLU_LUT_QUAD(2.5585937500e-01f, -1.5463614464e-01f, 2.5585937500e-01f, -1.3282361627e-01f, 2.5390625000e-01f, -1.1352804303e-01f, 2.5390625000e-01f, -9.6608236432e-02f), \
+    SWIGLU_LUT_QUAD(2.5195312500e-01f, -8.1883266568e-02f, 2.5195312500e-01f, -6.9152273238e-02f, 2.5195312500e-01f, -5.8208428323e-02f, 2.5195312500e-01f, -4.8848759383e-02f), \
+    SWIGLU_LUT_QUAD(2.5195312500e-01f, -4.0880300105e-02f, 2.5195312500e-01f, -3.4123960882e-02f, 2.5000000000e-01f, -2.8416510671e-02f, 2.5000000000e-01f, -0.0000000000e+00f)
+
+alignas(aie::vector_decl_align) static const float swiglu_linear_lut_ab[kMylmSwigluSegments * 4] = {
+    SWIGLU_LINEAR_APPROX_LUT_VALUES
 };
-
-static float sigmoid_approx(float value) {
-    if (value > 8.0f) {
-        return 1.0f;
-    }
-    if (value < -8.0f) {
-        return 0.0f;
-    }
-    const bool negative = value < 0.0f;
-    const float scaled = abs_f32(value) * sigmoid_table_scale;
-    int32_t index = static_cast<int32_t>(scaled);
-    if (index >= sigmoid_table_last) {
-        const float edge = sigmoid_table[sigmoid_table_last];
-        return negative ? 1.0f - edge : edge;
-    }
-    const float fraction = scaled - static_cast<float>(index);
-    const float low = sigmoid_table[index];
-    const float high = sigmoid_table[index + 1];
-    const float sigmoid = low + (high - low) * fraction;
-    return negative ? 1.0f - sigmoid : sigmoid;
-}
+alignas(aie::vector_decl_align) static const float swiglu_linear_lut_cd[kMylmSwigluSegments * 4] = {
+    SWIGLU_LINEAR_APPROX_LUT_VALUES
+};
+#undef SWIGLU_LINEAR_APPROX_LUT_VALUES
+#undef SWIGLU_LUT_QUAD
 
 } // namespace
 
@@ -56,14 +45,28 @@ void ffn_swiglu_slice_bf16_inputs(
     int32_t dwords,
     int32_t slice
 ) {
+    (void)dwords;
     (void)slice;
-    const int32_t half = dwords / 2;
-    bfloat16 *values = reinterpret_cast<bfloat16 *>(input);
-    for (int32_t idx = 0; idx < half * 2; idx++)
-        chess_prepare_for_pipelining chess_loop_range(1, 4096) {
-        const float up = static_cast<float>(values[idx]);
-        const float gate = static_cast<float>(values[half * 2 + idx]);
-        output[idx] = static_cast<bfloat16>(up * gate * sigmoid_approx(gate));
+    bfloat16 *__restrict values = reinterpret_cast<bfloat16 *>(input);
+    bfloat16 *__restrict up_values = values;
+    bfloat16 *__restrict gate_values = values + kSwigluLanes;
+
+    using Lut = aie::lut<4, float, bfloat16>;
+    Lut silu_lut(kMylmSwigluSegments, swiglu_linear_lut_ab, swiglu_linear_lut_cd);
+    aie::linear_approx<bfloat16, Lut> silu_approx(silu_lut, 0, 32, 0);
+    const aie::vector<bfloat16, 16> scale4 = aie::broadcast<bfloat16, 16>(4.0f);
+    const aie::vector<bfloat16, 16> one = aie::broadcast<bfloat16, 16>(1.0f);
+
+    for (int32_t idx = 0; idx < kSwigluLanes; idx += 16)
+        chess_prepare_for_pipelining chess_loop_range(kSwigluLanes / 16, kSwigluLanes / 16) {
+        const aie::vector<bfloat16, 16> up_vec = aie::load_v<16>(up_values + idx);
+        const aie::vector<bfloat16, 16> gate_vec = aie::load_v<16>(gate_values + idx);
+        const aie::vector<bfloat16, 16> gate_scaled =
+            aie::mul(gate_vec, scale4).template to_vector<bfloat16>();
+        const aie::vector<float, 16> silu_vec = silu_approx.compute(gate_scaled).template to_vector<float>();
+        const auto up_float = aie::mul(up_vec, one);
+        const auto output_acc = aie::mul(up_float.template to_vector<float>(), silu_vec);
+        aie::store_v(output + idx, output_acc.template to_vector<bfloat16>());
     }
 }
 

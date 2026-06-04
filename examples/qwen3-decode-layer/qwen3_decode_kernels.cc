@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include <aie_api/aie.hpp>
+#include <aie_api/utils.hpp>
 #include <adf/intrinsics.h>
 #include <stdint.h>
 
@@ -31,56 +32,65 @@ __attribute__((always_inline)) static inline Acc16 zero_accum16() {
   return aie::zeros<accfloat, kQ4NxRowsPerLane>();
 }
 
-__attribute__((always_inline)) static inline void accum_q4nx_lane(
-    Acc16 &acc, const uint8_t *__restrict packed_lane,
-    const bfloat16 *__restrict scale_lane,
-    const bfloat16 *__restrict offset_lane,
-    const bfloat16 *__restrict activation) {
-  for (int32_t qgroup = 0; qgroup < kGroupsPerChunk; qgroup++)
-      chess_prepare_for_pipelining chess_loop_range(8, 8) {
-    aie::vector<bfloat16, kQ4NxRowsPerLane> scale_vec =
-        aie::load_v<kQ4NxRowsPerLane>(scale_lane +
-                                      qgroup * qwen3::kMainRowsPerTile);
-    aie::vector<bfloat16, kQ4NxRowsPerLane> offset_vec =
-        aie::load_v<kQ4NxRowsPerLane>(offset_lane +
-                                      qgroup * qwen3::kMainRowsPerTile);
-    aie::vector<bfloat16, kGroupSize> act_group =
-        aie::load_v<kGroupSize>(activation + qgroup * kGroupSize);
-    const uint8_t *__restrict group_data =
-        packed_lane + qgroup * kQ4NxGroupBytesPerLane;
+__attribute__((always_inline)) static inline aie::vector<bfloat16, qwen3::kMainRowsPerTile>
+load_q4_dim_pair(const uint8_t *__restrict group_data, unsigned dim_pair) {
+  const uint4 *__restrict q4_ptr = reinterpret_cast<const uint4 *>(
+      group_data + dim_pair * kQ4NxRowsPerLane);
+  aie::vector<uint4, qwen3::kMainRowsPerTile> q4 =
+      aie::load_v<qwen3::kMainRowsPerTile, aie_dm_resource::d>(q4_ptr);
+  aie::vector<uint8, qwen3::kMainRowsPerTile> q8 = aie::unpack(q4);
+  aie::vector<uint16, qwen3::kMainRowsPerTile> q16 = aie::unpack(q8);
+  return aie::to_float<bfloat16>(q16, 0);
+}
 
-    for (int32_t dim = 0; dim < kGroupSize; dim += 2)
-        chess_prepare_for_pipelining chess_loop_range(16, 16) {
-      // Each lane stores 8 packed bytes per dim; load_v<32>(uint4*) consumes
-      // two dims, so the base advances by 16 bytes per dim pair.
-      const uint4 *__restrict q4_ptr = reinterpret_cast<const uint4 *>(
-          group_data + (dim / 2) * kQ4NxRowsPerLane);
-      aie::vector<uint4, qwen3::kMainRowsPerTile> q4 =
-          aie::load_v<qwen3::kMainRowsPerTile>(q4_ptr);
-      aie::vector<uint8, qwen3::kMainRowsPerTile> q8 = aie::unpack(q4);
-      aie::vector<uint16, qwen3::kMainRowsPerTile> q16 = aie::unpack(q8);
-      aie::vector<bfloat16, qwen3::kMainRowsPerTile> q_bf16 =
-          aie::to_float<bfloat16>(q16, 0);
+__attribute__((always_inline)) static inline void mac_q4_dim_pair(
+    Acc16 &acc,
+    const aie::vector<bfloat16, qwen3::kMainRowsPerTile> &q_bf16,
+    const aie::vector<bfloat16, kQ4NxRowsPerLane> &scale_vec,
+    const aie::vector<bfloat16, kQ4NxRowsPerLane> &offset_vec,
+    const aie::vector<bfloat16, kGroupSize> &act_group,
+    int32_t dim) {
+  aie::vector<bfloat16, kQ4NxRowsPerLane> q0 =
+      q_bf16.template extract<kQ4NxRowsPerLane>(0);
+  Acc16 scaled0 = aie::mul(q0, scale_vec);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> dequant0 =
+      aie::add(scaled0.template to_vector<bfloat16>(), offset_vec);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> act0 =
+      aie::broadcast<bfloat16, kQ4NxRowsPerLane>(act_group.get(dim));
+  acc = aie::mac(acc, dequant0, act0);
 
-      aie::vector<bfloat16, kQ4NxRowsPerLane> q0 =
-          q_bf16.template extract<kQ4NxRowsPerLane>(0);
-      Acc16 scaled0 = aie::mul(q0, scale_vec);
-      aie::vector<bfloat16, kQ4NxRowsPerLane> dequant0 =
-          aie::add(scaled0.template to_vector<bfloat16>(), offset_vec);
-      aie::vector<bfloat16, kQ4NxRowsPerLane> act0 =
-          aie::broadcast<bfloat16, kQ4NxRowsPerLane>(act_group.get(dim));
-      acc = aie::mac(acc, dequant0, act0);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> q1 =
+      q_bf16.template extract<kQ4NxRowsPerLane>(1);
+  Acc16 scaled1 = aie::mul(q1, scale_vec);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> dequant1 =
+      aie::add(scaled1.template to_vector<bfloat16>(), offset_vec);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> act1 =
+      aie::broadcast<bfloat16, kQ4NxRowsPerLane>(act_group.get(dim + 1));
+  acc = aie::mac(acc, dequant1, act1);
+}
 
-      aie::vector<bfloat16, kQ4NxRowsPerLane> q1 =
-          q_bf16.template extract<kQ4NxRowsPerLane>(1);
-      Acc16 scaled1 = aie::mul(q1, scale_vec);
-      aie::vector<bfloat16, kQ4NxRowsPerLane> dequant1 =
-          aie::add(scaled1.template to_vector<bfloat16>(), offset_vec);
-      aie::vector<bfloat16, kQ4NxRowsPerLane> act1 =
-          aie::broadcast<bfloat16, kQ4NxRowsPerLane>(act_group.get(dim + 1));
-      acc = aie::mac(acc, dequant1, act1);
-    }
-  }
+__attribute__((always_inline)) static inline void accum_q4nx_group_lane(
+    Acc16 &acc, const uint8_t *__restrict group_data,
+    const bfloat16 *__restrict scale_group,
+    const bfloat16 *__restrict offset_group,
+    const aie::vector<bfloat16, kGroupSize> &act_group) {
+  aie::vector<bfloat16, kQ4NxRowsPerLane> scale_vec =
+      aie::load_v<kQ4NxRowsPerLane, aie_dm_resource::a>(scale_group);
+  aie::vector<bfloat16, kQ4NxRowsPerLane> offset_vec =
+      aie::load_v<kQ4NxRowsPerLane, aie_dm_resource::b>(offset_group);
+
+  aie::vector<bfloat16, qwen3::kMainRowsPerTile> q_bf16_current =
+      load_q4_dim_pair(group_data, 0);
+  aie::pipelined_loop<kGroupSize / 2 - 1>(
+      kGroupSize / 2 - 1, [&](unsigned dim_pair) __aie_inline {
+    aie::vector<bfloat16, qwen3::kMainRowsPerTile> q_bf16_next =
+        load_q4_dim_pair(group_data, dim_pair + 1);
+    mac_q4_dim_pair(acc, q_bf16_current, scale_vec, offset_vec, act_group,
+                    static_cast<int32_t>(dim_pair) * 2);
+    q_bf16_current = q_bf16_next;
+  });
+  mac_q4_dim_pair(acc, q_bf16_current, scale_vec, offset_vec, act_group,
+                  kGroupSize - 2);
 }
 
 __attribute__((always_inline)) static inline void
@@ -93,10 +103,20 @@ accum_q4nx_chunk(Acc16 &acc0, Acc16 &acc1, bfloat16 *packed_chunk,
       reinterpret_cast<uint8_t *>(packed_chunk) + kQ4NxDataOffsetBytes;
   bfloat16 *activation = reinterpret_cast<bfloat16 *>(activation_words);
 
-  accum_q4nx_lane(acc0, packed_data, scales, offsets, activation);
-  accum_q4nx_lane(acc1, packed_data + kQ4NxDataBytesPerLane,
-                  scales + kQ4NxRowsPerLane, offsets + kQ4NxRowsPerLane,
-                  activation);
+  aie::pipelined_loop<kGroupsPerChunk>(
+      kGroupsPerChunk, [&](unsigned qgroup) __aie_inline {
+    aie::vector<bfloat16, kGroupSize> act_group =
+        aie::load_v<kGroupSize, aie_dm_resource::c>(
+            activation + qgroup * kGroupSize);
+    const int32_t row_group = qgroup * qwen3::kMainRowsPerTile;
+    const int32_t data_group = qgroup * kQ4NxGroupBytesPerLane;
+    accum_q4nx_group_lane(acc0, packed_data + data_group, scales + row_group,
+                          offsets + row_group, act_group);
+    accum_q4nx_group_lane(acc1,
+                          packed_data + kQ4NxDataBytesPerLane + data_group,
+                          scales + row_group + kQ4NxRowsPerLane,
+                          offsets + row_group + kQ4NxRowsPerLane, act_group);
+  });
 }
 
 __attribute__((always_inline)) static inline void
@@ -113,19 +133,40 @@ emit_record(Acc16 &acc0, Acc16 &acc1, int32_t *record, int32_t header) {
   emit_record_payload(acc0, acc1, record);
 }
 
-static void run_projection_phase(bfloat16 *wt_ping, bfloat16 *wt_pong,
-                                 int32_t *act_ping, int32_t *act_pong,
-                                 int32_t *record_ping, int32_t *record_pong,
-                                 int32_t record_header, int32_t records,
-                                 int32_t chunks_per_record,
-                                 int32_t *record_toggle) {
-  for (int32_t block = 0; block < records; block++)
-      chess_loop_range(1, 48) {
+#ifdef QWEN3_ENABLE_MAIN16_CYCLE_PROFILE
+__attribute__((always_inline)) static inline void store_u64_words(
+    int32_t *record, int32_t index, uint64_t value) {
+  record[index] = static_cast<int32_t>(value & 0xffffffffULL);
+  record[index + 1] = static_cast<int32_t>(value >> 32);
+}
+
+__attribute__((always_inline)) static inline void
+emit_cycle_record(Acc16 &acc0, Acc16 &acc1, int32_t *record, int32_t block,
+                  uint64_t total_cycles, uint64_t compute_cycles) {
+  record[0] = qwen3::kQCompactPacketId;
+  emit_record_payload(acc0, acc1, record);
+  record[1] = block;
+  store_u64_words(record, 2, total_cycles);
+  store_u64_words(record, 4, compute_cycles);
+  record[6] = qwen3::kQChunksPerRecord;
+  record[7] = kActSliceBf16;
+  record[8] = qwen3::kMainRowsPerTile;
+}
+#endif
+
+template <int32_t Records, int32_t ChunksPerRecord>
+__attribute__((always_inline)) static inline void
+run_projection_body(bfloat16 *wt_ping, bfloat16 *wt_pong, int32_t *act_ping,
+                    int32_t *act_pong, int32_t *record_ping,
+                    int32_t *record_pong, int32_t record_header,
+                    int32_t *record_toggle) {
+  for (int32_t block = 0; block < Records; block++)
+      chess_loop_range(Records, Records) {
     Acc16 acc0 = zero_accum16();
     Acc16 acc1 = zero_accum16();
 
-    for (int32_t chunk = 0; chunk < chunks_per_record; chunk++)
-        chess_loop_range(16, 48) {
+    for (int32_t chunk = 0; chunk < ChunksPerRecord; chunk++)
+        chess_loop_range(ChunksPerRecord, ChunksPerRecord) {
       acquire_greater_equal(qwen3::kMainActivationFullCoreLock, 1);
       acquire_greater_equal(qwen3::kMainWeightFullCoreLock, 1);
 
@@ -145,6 +186,53 @@ static void run_projection_phase(bfloat16 *wt_ping, bfloat16 *wt_pong,
   }
 }
 
+__attribute__((always_inline)) static inline void
+run_q_only_body(bfloat16 *wt_ping, bfloat16 *wt_pong, int32_t *act_ping,
+                int32_t *act_pong, int32_t *record_ping,
+                int32_t *record_pong, int32_t *record_toggle) {
+  run_projection_body<qwen3::kQBodyRecords, qwen3::kQChunksPerRecord>(
+      wt_ping, wt_pong, act_ping, act_pong, record_ping, record_pong,
+      qwen3::kQCompactPacketId, record_toggle);
+}
+
+__attribute__((always_inline)) static inline void
+run_qkv_body(bfloat16 *wt_ping, bfloat16 *wt_pong, int32_t *act_ping,
+             int32_t *act_pong, int32_t *record_ping, int32_t *record_pong,
+             int32_t *record_toggle) {
+  constexpr int32_t kQkvBodyRecords =
+      qwen3::kQBodyRecords + qwen3::kKvBodyRecords + qwen3::kKvBodyRecords;
+  run_projection_body<kQkvBodyRecords, qwen3::kQChunksPerRecord>(
+      wt_ping, wt_pong, act_ping, act_pong, record_ping, record_pong,
+      qwen3::kQCompactPacketId, record_toggle);
+}
+
+__attribute__((always_inline)) static inline void
+run_o_body(bfloat16 *wt_ping, bfloat16 *wt_pong, int32_t *act_ping,
+           int32_t *act_pong, int32_t *record_ping, int32_t *record_pong,
+           int32_t *record_toggle) {
+  run_projection_body<qwen3::kOBodyRecords, qwen3::kOChunksPerRecord>(
+      wt_ping, wt_pong, act_ping, act_pong, record_ping, record_pong,
+      qwen3::kOCompactPacketId, record_toggle);
+}
+
+__attribute__((always_inline)) static inline void
+run_upgate_body(bfloat16 *wt_ping, bfloat16 *wt_pong, int32_t *act_ping,
+                int32_t *act_pong, int32_t *record_ping,
+                int32_t *record_pong, int32_t *record_toggle) {
+  run_projection_body<qwen3::kUpGateReplays, qwen3::kUpGateChunksPerReplay>(
+      wt_ping, wt_pong, act_ping, act_pong, record_ping, record_pong,
+      qwen3::kFfnCompactPacketId, record_toggle);
+}
+
+__attribute__((always_inline)) static inline void
+run_down_body(bfloat16 *wt_ping, bfloat16 *wt_pong, int32_t *act_ping,
+              int32_t *act_pong, int32_t *record_ping,
+              int32_t *record_pong, int32_t *record_toggle) {
+  run_projection_body<qwen3::kDownBodyRecords, qwen3::kDownChunksPerRecord>(
+      wt_ping, wt_pong, act_ping, act_pong, record_ping, record_pong,
+      qwen3::kDownCompactPacketId, record_toggle);
+}
+
 } // namespace
 
 extern "C" {
@@ -159,42 +247,79 @@ void q4nx_main16_layer_scheduler(bfloat16 *wt_ping, bfloat16 *wt_pong,
   (void)row;
   (void)num_rows;
   int32_t record_toggle = 0;
-  if (phase_limit > qwen3::kQPhase) {
-    run_projection_phase(wt_ping, wt_pong, act_ping, act_pong, record_ping,
-                         record_pong, qwen3::kQCompactPacketId,
-                         qwen3::kQBodyRecords, qwen3::kQChunksPerRecord,
-                         &record_toggle);
+  if (phase_limit == qwen3::kQPhase + 1) {
+    run_q_only_body(wt_ping, wt_pong, act_ping, act_pong, record_ping,
+                    record_pong, &record_toggle);
+    return;
   }
-  if (phase_limit > qwen3::kKPhase) {
-    run_projection_phase(wt_ping, wt_pong, act_ping, act_pong, record_ping,
-                         record_pong, qwen3::kKCompactPacketId,
-                         qwen3::kKvBodyRecords, qwen3::kKvChunksPerRecord,
-                         &record_toggle);
+
+  if (phase_limit >= qwen3::kMain16PhaseLimitQkv) {
+    run_qkv_body(wt_ping, wt_pong, act_ping, act_pong, record_ping,
+                 record_pong, &record_toggle);
   }
-  if (phase_limit > qwen3::kVPhase) {
-    run_projection_phase(wt_ping, wt_pong, act_ping, act_pong, record_ping,
-                         record_pong, qwen3::kVCompactPacketId,
-                         qwen3::kKvBodyRecords, qwen3::kKvChunksPerRecord,
-                         &record_toggle);
+  if (phase_limit >= qwen3::kMain16PhaseLimitQkvo) {
+    run_o_body(wt_ping, wt_pong, act_ping, act_pong, record_ping, record_pong,
+               &record_toggle);
   }
-  if (phase_limit > qwen3::kOPhase) {
-    run_projection_phase(wt_ping, wt_pong, act_ping, act_pong, record_ping,
-                         record_pong, qwen3::kOCompactPacketId,
-                         qwen3::kOBodyRecords, qwen3::kOChunksPerRecord,
-                         &record_toggle);
+  if (phase_limit >= qwen3::kMain16PhaseLimitUpGate) {
+    run_upgate_body(wt_ping, wt_pong, act_ping, act_pong, record_ping,
+                    record_pong, &record_toggle);
   }
-  if (phase_limit > qwen3::kGatePhase) {
-    run_projection_phase(wt_ping, wt_pong, act_ping, act_pong, record_ping,
-                         record_pong, qwen3::kFfnCompactPacketId,
-                         qwen3::kUpGateReplays,
-                         qwen3::kUpGateChunksPerReplay, &record_toggle);
-  }
-  if (phase_limit > qwen3::kDownPhase) {
-    run_projection_phase(wt_ping, wt_pong, act_ping, act_pong, record_ping,
-                         record_pong, qwen3::kDownCompactPacketId,
-                         qwen3::kDownBodyRecords,
-                         qwen3::kDownChunksPerRecord, &record_toggle);
+  if (phase_limit >= qwen3::kMain16PhaseLimitFull) {
+    run_down_body(wt_ping, wt_pong, act_ping, act_pong, record_ping,
+                  record_pong, &record_toggle);
   }
 }
+
+#ifdef QWEN3_ENABLE_MAIN16_CYCLE_PROFILE
+void q4nx_main16_cycle_profile_scheduler(bfloat16 *wt_ping,
+                                         bfloat16 *wt_pong, int32_t *act_ping,
+                                         int32_t *act_pong,
+                                         int32_t *record_ping,
+                                         int32_t *record_pong, int32_t group,
+                                         int32_t row, int32_t num_rows,
+                                         int32_t phase_limit) {
+  ::aie::set_rounding(aie::rounding_mode::conv_even);
+  (void)group;
+  (void)row;
+  (void)num_rows;
+  (void)phase_limit;
+  int32_t record_toggle = 0;
+  ::aie::tile tile = ::aie::tile::current();
+
+  for (int32_t block = 0; block < qwen3::kQBodyRecords; block++)
+      chess_loop_range(qwen3::kQBodyRecords, qwen3::kQBodyRecords) {
+    Acc16 acc0 = zero_accum16();
+    Acc16 acc1 = zero_accum16();
+    uint64_t compute_cycles = 0;
+    uint64_t total_start = tile.cycles();
+
+    for (int32_t chunk = 0; chunk < qwen3::kQChunksPerRecord; chunk++)
+        chess_loop_range(qwen3::kQChunksPerRecord,
+                         qwen3::kQChunksPerRecord) {
+      acquire_greater_equal(qwen3::kMainActivationFullCoreLock, 1);
+      acquire_greater_equal(qwen3::kMainWeightFullCoreLock, 1);
+
+      bfloat16 *wt = (chunk & 1) == 0 ? wt_ping : wt_pong;
+      int32_t *act = (chunk & 1) == 0 ? act_ping : act_pong;
+      uint64_t compute_start = tile.cycles();
+      accum_q4nx_chunk(acc0, acc1, wt, act);
+      uint64_t compute_end = tile.cycles();
+      compute_cycles += compute_end - compute_start;
+
+      release(qwen3::kMainActivationEmptyCoreLock, 1);
+      release(qwen3::kMainWeightEmptyCoreLock, 1);
+    }
+
+    uint64_t total_end = tile.cycles();
+    acquire_greater_equal(qwen3::kMainRecordEmptyCoreLock, 1);
+    int32_t *record = (record_toggle & 1) == 0 ? record_ping : record_pong;
+    emit_cycle_record(acc0, acc1, record, block, total_end - total_start,
+                      compute_cycles);
+    record_toggle += 1;
+    release(qwen3::kMainRecordFullCoreLock, 1);
+  }
+}
+#endif
 
 } // extern "C"

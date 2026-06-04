@@ -4,6 +4,23 @@
 namespace {
 
 constexpr int32_t kRmsVecLanes = 32;
+constexpr int32_t kCopyVecDwords = 16;
+constexpr int32_t kRecordPayloadDwords = 256;
+constexpr int32_t kQRecords = 8;
+constexpr int32_t kKvRecords = 2;
+
+__attribute__((always_inline)) static inline void copy_record_payload(
+    const int32_t *__restrict record_payload,
+    int32_t *__restrict target
+) {
+    for (int32_t idx = 0; idx < kRecordPayloadDwords; idx += kCopyVecDwords)
+        chess_prepare_for_pipelining
+        chess_loop_range(kRecordPayloadDwords / kCopyVecDwords, kRecordPayloadDwords / kCopyVecDwords) {
+        aie::vector<int32_t, kCopyVecDwords> words =
+            aie::load_v<kCopyVecDwords, aie_dm_resource::a>(record_payload + idx);
+        aie::store_v(target + idx, words);
+    }
+}
 
 static uint16_t bf16_bits(float value) {
     union {
@@ -196,28 +213,22 @@ void qwen3_postprocess_absorb_qkv_payload_record(
     int32_t *v_body,
     int32_t record_index
 ) {
-    constexpr int32_t record_payload_dwords = 256;
-    constexpr int32_t q_records = 8;
-    constexpr int32_t kv_records = 2;
     int32_t *target = nullptr;
     int32_t block = 0;
-    if (record_index < q_records) {
+    if (record_index < kQRecords) {
         target = q_body;
         block = record_index;
-    } else if (record_index < q_records + kv_records) {
+    } else if (record_index < kQRecords + kKvRecords) {
         target = k_body;
-        block = record_index - q_records;
-    } else if (record_index < q_records + kv_records * 2) {
+        block = record_index - kQRecords;
+    } else if (record_index < kQRecords + kKvRecords * 2) {
         target = v_body;
-        block = record_index - q_records - kv_records;
+        block = record_index - kQRecords - kKvRecords;
     }
     if (target == nullptr) {
         return;
     }
-    const int32_t base = block * record_payload_dwords;
-    for (int32_t idx = 0; idx < record_payload_dwords; idx++) {
-        target[base + idx] = record_payload[idx];
-    }
+    copy_record_payload(record_payload, target + block * kRecordPayloadDwords);
 }
 
 void qwen3_postprocess_q4nx_body_payload(

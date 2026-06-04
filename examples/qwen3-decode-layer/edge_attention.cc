@@ -10,11 +10,55 @@ constexpr int32_t kHeadDim = 128;
 constexpr int32_t kGqaRatio = 4;
 constexpr int32_t kWeightDwords = 64;
 constexpr int32_t kVecLanes = 32;
+constexpr int32_t kAccumLanes = kHeads * kHeadDim;
+constexpr int32_t kStateDwords = kHeads * 2;
 constexpr float kRsqrtHeadDim = 0.0883883476f;
 
 using VecBf16 = aie::vector<bfloat16, kVecLanes>;
 using VecF32 = aie::vector<float, kVecLanes>;
 using AccF32 = aie::accum<accfloat, kVecLanes>;
+
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+constexpr int32_t kEdgeProfileMarker = 0x41545450;
+static uint64_t g_init_cycles = 0;
+static uint64_t g_carrier_cycles = 0;
+static uint64_t g_accum_cycles = 0;
+static uint64_t g_finish_cycles = 0;
+static int32_t g_carrier_calls = 0;
+static int32_t g_accum_calls = 0;
+
+__attribute__((always_inline)) static inline uint64_t current_cycles() {
+    return ::aie::tile::current().cycles();
+}
+
+__attribute__((always_inline)) static inline void store_u64_words(
+    int32_t *words,
+    int32_t index,
+    uint64_t value
+) {
+    words[index] = static_cast<int32_t>(value & 0xffffffffULL);
+    words[index + 1] = static_cast<int32_t>(value >> 32);
+}
+
+static void reset_profile() {
+    g_init_cycles = 0;
+    g_carrier_cycles = 0;
+    g_accum_cycles = 0;
+    g_finish_cycles = 0;
+    g_carrier_calls = 0;
+    g_accum_calls = 0;
+}
+
+static void emit_profile_summary(int32_t *output) {
+    output[0] = kEdgeProfileMarker;
+    store_u64_words(output, 1, g_init_cycles);
+    store_u64_words(output, 3, g_carrier_cycles);
+    store_u64_words(output, 5, g_accum_cycles);
+    store_u64_words(output, 7, g_finish_cycles);
+    output[9] = g_carrier_calls;
+    output[10] = g_accum_calls;
+}
+#endif
 
 static bfloat16 bf16_lane(int32_t *payload, int32_t lane) {
     bfloat16 *values = reinterpret_cast<bfloat16 *>(payload);
@@ -136,10 +180,9 @@ void qwen3_attention_bf16_make_carrier_masked(
     int32_t k_dwords,
     int32_t carrier_dwords
 ) {
-    for (int32_t idx = 0; idx < carrier_dwords; idx++) {
-        carrier[idx] = 0;
-    }
-
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+    const uint64_t start = current_cycles();
+#endif
     const int32_t valid_tokens = block + 1 == blocks ? tail_tokens : kContext;
     bfloat16 *weights = reinterpret_cast<bfloat16 *>(carrier);
     float *scalars = as_f32(carrier + kWeightDwords);
@@ -171,6 +214,11 @@ void qwen3_attention_bf16_make_carrier_masked(
     (void)window;
     (void)q_dwords;
     (void)k_dwords;
+    (void)carrier_dwords;
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+    g_carrier_cycles += current_cycles() - start;
+    g_carrier_calls += 1;
+#endif
 }
 
 void qwen3_attention_bf16_init_accum(
@@ -179,20 +227,25 @@ void qwen3_attention_bf16_init_accum(
     int32_t accum_lanes,
     int32_t state_dwords
 ) {
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+    reset_profile();
+    const uint64_t start = current_cycles();
+#endif
     float *accum_values = as_f32(accum);
     float *state_values = as_f32(state);
     VecF32 zero_vec = aie::zeros<float, kVecLanes>();
-    const int32_t vector_lanes = accum_lanes & ~(kVecLanes - 1);
-    for (int32_t idx = 0; idx < vector_lanes; idx += kVecLanes)
+    for (int32_t idx = 0; idx < kAccumLanes; idx += kVecLanes)
         chess_prepare_for_pipelining chess_loop_range(32, 32) {
         aie::store_v(accum_values + idx, zero_vec);
     }
-    for (int32_t idx = vector_lanes; idx < accum_lanes; idx++) {
-        accum_values[idx] = 0.0f;
-    }
-    for (int32_t idx = 0; idx < state_dwords; idx++) {
-        state_values[idx] = 0.0f;
-    }
+    aie::vector<float, kStateDwords> zero_state = aie::zeros<float, kStateDwords>();
+    aie::store_v(state_values, zero_state);
+
+    (void)accum_lanes;
+    (void)state_dwords;
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+    g_init_cycles = current_cycles() - start;
+#endif
 }
 
 void qwen3_attention_bf16_accum_block(
@@ -206,6 +259,9 @@ void qwen3_attention_bf16_accum_block(
     int32_t accum_lanes,
     int32_t state_dwords
 ) {
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+    const uint64_t start = current_cycles();
+#endif
     bfloat16 *weights = reinterpret_cast<bfloat16 *>(carrier);
     float *scalars = as_f32(carrier + kWeightDwords);
     float *accum_values = as_f32(accum);
@@ -240,6 +296,10 @@ void qwen3_attention_bf16_accum_block(
     (void)carrier_dwords;
     (void)accum_lanes;
     (void)state_dwords;
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+    g_accum_cycles += current_cycles() - start;
+    g_accum_calls += 1;
+#endif
 }
 
 void qwen3_attention_bf16_finish_accum(
@@ -250,6 +310,9 @@ void qwen3_attention_bf16_finish_accum(
     int32_t accum_lanes,
     int32_t state_dwords
 ) {
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+    const uint64_t start = current_cycles();
+#endif
     ::aie::set_rounding(aie::rounding_mode::conv_even);
     float *accum_values = as_f32(accum);
     float *state_values = as_f32(state);
@@ -271,6 +334,10 @@ void qwen3_attention_bf16_finish_accum(
 
     (void)accum_lanes;
     (void)state_dwords;
+#ifdef QWEN3_ENABLE_EDGE_ATTENTION_CYCLE_PROFILE
+    g_finish_cycles = current_cycles() - start;
+    emit_profile_summary(output);
+#endif
 }
 
 } // extern "C"

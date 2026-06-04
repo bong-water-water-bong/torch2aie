@@ -82,6 +82,16 @@ make -C examples/qwen3-decode-layer weight-stream-light-attention-run
 make -C examples/qwen3-decode-layer weight-path-run
 make -C examples/qwen3-decode-layer weight-compact-run
 
+make -C examples/qwen3-decode-layer kernel-all-run
+make -C examples/qwen3-decode-layer kernel-postprocess-qkv-run
+make -C examples/qwen3-decode-layer kernel-full-vector-run
+make -C examples/qwen3-decode-layer kernel-full-vector-profile-run
+make -C examples/qwen3-decode-layer kernel-edge-attention-run
+make -C examples/qwen3-decode-layer kernel-edge-attention-profile-run
+make -C examples/qwen3-decode-layer kernel-main16-q4nx-run
+make -C examples/qwen3-decode-layer kernel-main16-q4nx-profile-run
+make -C examples/qwen3-decode-layer kernel-swiglu-run
+
 make -C examples/qwen3-decode-layer analyze-kernels
 make -C examples/qwen3-decode-layer analyze-kernels KERNELS=postprocess_qkv.o
 make -C examples/qwen3-decode-layer analyze-main16
@@ -94,6 +104,37 @@ The generated runtime ABI is the IRON QKV-prefix ABI:
 
 The full-layer runtime ABI is:
 `k_cache, v_cache, aux_prefixed_weights, output, hidden`.
+
+Kernel tuning should start with an isolated kernel numerical microbench and a
+single-object Chess report, then return to `full-run` only after that kernel
+passes.  Current isolated gates:
+
+- `kernel-postprocess-qkv-run`: links only `postprocess_qkv.o`; feeds the same
+  12 header-stripped Q/K/V compact payload records plus Q/K norm and RoPE side
+  data; checks Q payload, current-K stream, and current-V stream against the
+  CPU oracle.
+- `kernel-full-vector-run`: links only `full_vector_station.o`; feeds host
+  hidden/norm vectors plus O/down compact packets; checks input replay, post
+  replay, and final down residual output against the CPU oracle.
+- `kernel-full-vector-profile-run`: links only
+  `full_vector_station_profile.o`; feeds the same hidden/norm/compact streams
+  but writes a debug cycle summary on the final output path.  This is a
+  diagnostic gate, not an oracle gate.
+- `kernel-edge-attention-run`: links only `edge_attention.o`; feeds one Q
+  window and two K/V blocks; checks the bf16 carrier/streaming-softmax/V-accum
+  path through the final attention output against the CPU oracle.
+- `kernel-edge-attention-profile-run`: links only `edge_attention_profile.o`;
+  feeds the same Q/K/V windows but writes a debug cycle summary on the final
+  attention output path.  This is a diagnostic gate, not an oracle gate.
+- `kernel-main16-q4nx-run`: links only `main_projection_q4nx_fast.o`; feeds one
+  Main16 tile with a full Q phase activation/weight ping-pong stream; checks
+  the eight strict 17-dword MyLM records against the Q4NX CPU oracle.
+- `kernel-main16-q4nx-profile-run`: links only
+  `main_projection_q4nx_profile.o`; feeds the same Q phase stream but writes
+  debug cycle records on the 17-dword output path.  This is a diagnostic gate,
+  not an oracle gate.
+- `kernel-swiglu-run`: links only `swiglu.o`; feeds one up/gate compact packet
+  pair; checks table-sigmoid SwiGLU output against the CPU oracle.
 
 On the local NPU, the current Chess C++ full-layer frontier passes layer0/token31
 against the CPU oracle and runs in about `37,000 us`.  Main16 uses an AIE API

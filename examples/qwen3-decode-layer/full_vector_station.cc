@@ -4,11 +4,50 @@
 namespace {
 
 constexpr int32_t kRmsVecLanes = 32;
+constexpr int32_t kFullVectorBlockLanes = 512;
+constexpr int32_t kFullVectorAddLanes = 16;
 
-static bfloat16 compact_lane(int32_t *compact, int32_t lane) {
-    bfloat16 *payload = reinterpret_cast<bfloat16 *>(compact + 1);
-    return payload[lane];
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+constexpr int32_t kFullVectorProfileMarker = 0x46564c50;
+static uint64_t g_input_norm_cycles = 0;
+static uint64_t g_post_norm_cycles = 0;
+static uint64_t g_o_cycles = 0;
+static uint64_t g_down_cycles = 0;
+static int32_t g_o_blocks = 0;
+static int32_t g_down_blocks = 0;
+
+__attribute__((always_inline)) static inline uint64_t current_cycles() {
+    return ::aie::tile::current().cycles();
 }
+
+__attribute__((always_inline)) static inline void store_u64_words(
+    int32_t *words,
+    int32_t index,
+    uint64_t value
+) {
+    words[index] = static_cast<int32_t>(value & 0xffffffffULL);
+    words[index + 1] = static_cast<int32_t>(value >> 32);
+}
+
+static void reset_profile() {
+    g_input_norm_cycles = 0;
+    g_post_norm_cycles = 0;
+    g_o_cycles = 0;
+    g_down_cycles = 0;
+    g_o_blocks = 0;
+    g_down_blocks = 0;
+}
+
+static void emit_profile_summary(int32_t *output) {
+    output[0] = kFullVectorProfileMarker;
+    store_u64_words(output, 1, g_input_norm_cycles);
+    store_u64_words(output, 3, g_post_norm_cycles);
+    store_u64_words(output, 5, g_o_cycles);
+    store_u64_words(output, 7, g_down_cycles);
+    output[9] = g_o_blocks;
+    output[10] = g_down_blocks;
+}
+#endif
 
 static bfloat16 *as_bf16(int32_t *words) {
     return reinterpret_cast<bfloat16 *>(words);
@@ -104,42 +143,58 @@ static void write_weighted_rms_values(
     }
 }
 
+static void add_bf16_block_inplace(
+    bfloat16 *__restrict values,
+    bfloat16 *__restrict rhs,
+    int32_t base
+) {
+    ::aie::set_rounding(aie::rounding_mode::conv_even);
+    for (int32_t lane = 0; lane < kFullVectorBlockLanes; lane += kFullVectorAddLanes)
+        chess_prepare_for_pipelining chess_loop_range(
+            kFullVectorBlockLanes / kFullVectorAddLanes,
+            kFullVectorBlockLanes / kFullVectorAddLanes
+        ) {
+        const int32_t global_lane = base + lane;
+        aie::vector<bfloat16, kFullVectorAddLanes> value_vec =
+            aie::load_v<kFullVectorAddLanes, aie_dm_resource::a>(values + global_lane);
+        aie::vector<bfloat16, kFullVectorAddLanes> rhs_vec =
+            aie::load_unaligned_v<kFullVectorAddLanes, aie_dm_resource::b>(rhs + lane, 2);
+        aie::accum<accfloat, kFullVectorAddLanes> value_acc(value_vec);
+        aie::accum<accfloat, kFullVectorAddLanes> rhs_acc(rhs_vec);
+        aie::accum<accfloat, kFullVectorAddLanes> sum = aie::add(value_acc, rhs_acc);
+        aie::store_v<aie_dm_resource::a>(values + global_lane, sum.template to_vector<bfloat16>());
+    }
+    chess_separator_scheduler();
+}
+
+static void add_bf16_block_out(
+    bfloat16 *__restrict lhs,
+    bfloat16 *__restrict rhs,
+    bfloat16 *__restrict output,
+    int32_t base
+) {
+    ::aie::set_rounding(aie::rounding_mode::conv_even);
+    for (int32_t lane = 0; lane < kFullVectorBlockLanes; lane += kFullVectorAddLanes)
+        chess_prepare_for_pipelining chess_loop_range(
+            kFullVectorBlockLanes / kFullVectorAddLanes,
+            kFullVectorBlockLanes / kFullVectorAddLanes
+        ) {
+        const int32_t global_lane = base + lane;
+        aie::vector<bfloat16, kFullVectorAddLanes> lhs_vec =
+            aie::load_v<kFullVectorAddLanes, aie_dm_resource::a>(lhs + global_lane);
+        aie::vector<bfloat16, kFullVectorAddLanes> rhs_vec =
+            aie::load_unaligned_v<kFullVectorAddLanes, aie_dm_resource::b>(rhs + lane, 2);
+        aie::accum<accfloat, kFullVectorAddLanes> lhs_acc(lhs_vec);
+        aie::accum<accfloat, kFullVectorAddLanes> rhs_acc(rhs_vec);
+        aie::accum<accfloat, kFullVectorAddLanes> sum = aie::add(lhs_acc, rhs_acc);
+        aie::store_v(output + global_lane, sum.template to_vector<bfloat16>());
+    }
+    chess_separator_scheduler();
+}
+
 } // namespace
 
 extern "C" {
-
-void qkv_c1r2_summarize_compact(int32_t *compact, int32_t *summary, int32_t dwords) {
-    uint32_t sum = 0;
-    uint32_t hash = 0;
-    for (int32_t idx = 0; idx < dwords; idx++) {
-        const uint32_t value = static_cast<uint32_t>(compact[idx]);
-        sum += value;
-        hash = (hash * 16777619u) ^ (value + static_cast<uint32_t>(idx));
-    }
-    summary[0] = 0x51564F43;
-    summary[1] = dwords;
-    summary[2] = compact[0];
-    summary[3] = compact[dwords - 1];
-    summary[4] = static_cast<int32_t>(sum);
-    summary[5] = static_cast<int32_t>(hash);
-    summary[6] = compact[1];
-    summary[7] = compact[dwords - 2];
-}
-
-void full_c1r2_make_input_norm_replay(
-    int32_t *hidden,
-    int32_t *norm_weight,
-    int32_t *replay,
-    int32_t payload_dwords
-) {
-    replay[0] = 0xC1000000;
-    write_weighted_rms_values(
-        as_bf16(hidden),
-        as_bf16(norm_weight),
-        reinterpret_cast<bfloat16 *>(replay + 1),
-        payload_dwords * 2
-    );
-}
 
 void full_c1r2_make_input_norm_payload(
     int32_t *hidden,
@@ -147,35 +202,28 @@ void full_c1r2_make_input_norm_payload(
     int32_t *payload,
     int32_t payload_dwords
 ) {
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+    reset_profile();
+    const uint64_t start = current_cycles();
+#endif
     write_weighted_rms_values(as_bf16(hidden), as_bf16(norm_weight), as_bf16(payload), payload_dwords * 2);
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+    g_input_norm_cycles = current_cycles() - start;
+#endif
 }
 
 void full_c1r2_add_o_compact_to_residual(int32_t *hidden, int32_t *compact, int32_t block) {
-    constexpr int32_t lanes_per_block = 512;
     bfloat16 *residual = as_bf16(hidden);
-    const int32_t base = block * lanes_per_block;
-    for (int32_t lane = 0; lane < lanes_per_block; lane++)
-        chess_prepare_for_pipelining chess_loop_range(lanes_per_block, lanes_per_block) {
-        const int32_t global_lane = base + lane;
-        residual[global_lane] = bf16_rne(
-            static_cast<float>(residual[global_lane]) + static_cast<float>(compact_lane(compact, lane))
-        );
-    }
-}
-
-void full_c1r2_make_post_norm_replay(
-    int32_t *residual,
-    int32_t *norm_weight,
-    int32_t *replay,
-    int32_t payload_dwords
-) {
-    replay[0] = 0xC1000000;
-    write_weighted_rms_values(
-        as_bf16(residual),
-        as_bf16(norm_weight),
-        reinterpret_cast<bfloat16 *>(replay + 1),
-        payload_dwords * 2
-    );
+    bfloat16 *compact_payload = as_bf16(compact + 1);
+    const int32_t base = block * kFullVectorBlockLanes;
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+    const uint64_t start = current_cycles();
+#endif
+    add_bf16_block_inplace(residual, compact_payload, base);
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+    g_o_cycles += current_cycles() - start;
+    g_o_blocks += 1;
+#endif
 }
 
 void full_c1r2_make_post_norm_payload(
@@ -184,31 +232,31 @@ void full_c1r2_make_post_norm_payload(
     int32_t *payload,
     int32_t payload_dwords
 ) {
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+    const uint64_t start = current_cycles();
+#endif
     write_weighted_rms_values(as_bf16(residual), as_bf16(norm_weight), as_bf16(payload), payload_dwords * 2);
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+    g_post_norm_cycles = current_cycles() - start;
+#endif
 }
 
 void full_c1r2_write_down_block(int32_t *residual, int32_t *compact, int32_t *output, int32_t block) {
-    constexpr int32_t lanes_per_block = 512;
     bfloat16 *residual_values = as_bf16(residual);
+    bfloat16 *compact_payload = as_bf16(compact + 1);
     bfloat16 *output_values = as_bf16(output);
-    const int32_t base = block * lanes_per_block;
-    for (int32_t lane = 0; lane < lanes_per_block; lane++)
-        chess_prepare_for_pipelining chess_loop_range(lanes_per_block, lanes_per_block) {
-        const int32_t global_lane = base + lane;
-        output_values[global_lane] = bf16_rne(
-            static_cast<float>(residual_values[global_lane]) + static_cast<float>(compact_lane(compact, lane))
-        );
+    const int32_t base = block * kFullVectorBlockLanes;
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+    const uint64_t start = current_cycles();
+#endif
+    add_bf16_block_out(residual_values, compact_payload, output_values, base);
+#ifdef QWEN3_ENABLE_FULL_VECTOR_CYCLE_PROFILE
+    g_down_cycles += current_cycles() - start;
+    g_down_blocks += 1;
+    if (block == 7) {
+        emit_profile_summary(output);
     }
-}
-
-void full_c1r2_write_o_block(int32_t *compact, int32_t *output, int32_t block) {
-    constexpr int32_t lanes_per_block = 512;
-    bfloat16 *output_values = as_bf16(output);
-    const int32_t base = block * lanes_per_block;
-    for (int32_t lane = 0; lane < lanes_per_block; lane++)
-        chess_prepare_for_pipelining chess_loop_range(lanes_per_block, lanes_per_block) {
-        output_values[base + lane] = compact_lane(compact, lane);
-    }
+#endif
 }
 
 } // extern "C"

@@ -28,11 +28,21 @@ SWIGLU_SOURCE = os.environ.get("QWEN3_SWIGLU_SOURCE", "swiglu.cc")
 
 ROLE_KERNEL_SOURCES = {
     "edge_attention.o": (EDGE_ATTENTION_SOURCE,),
+    "edge_attention_profile.o": ("edge_attention_profile.cc", "edge_attention.cc"),
     "full_vector_station.o": (FULL_VECTOR_STATION_SOURCE,),
+    "full_vector_station_profile.o": ("full_vector_station_profile.cc", "full_vector_station.cc"),
     "main_projection_q4nx_fast.o": (MAIN16_KERNEL_SOURCE,),
+    "main_projection_q4nx_profile.o": ("qwen3_decode_kernels_profile.cc", "qwen3_decode_kernels.cc"),
     "postprocess_qkv.o": (POSTPROCESS_QKV_SOURCE,),
     "swiglu.o": (SWIGLU_SOURCE,),
 }
+PRODUCTION_ROLE_OBJECTS = (
+    "edge_attention.o",
+    "full_vector_station.o",
+    "main_projection_q4nx_fast.o",
+    "postprocess_qkv.o",
+    "swiglu.o",
+)
 ROLE_KERNEL_HEADERS = ("qwen3_constants.h", "record_format.h")
 LINK_WITH_RE = re.compile(r'link_with = "[^"]*/([^/"]+\.o)"')
 
@@ -85,8 +95,8 @@ def _role_object_path(object_name: str) -> Path:
 
 
 def _compile_aie_object(source_names: tuple[str, ...], object_name: str) -> None:
-    if len(source_names) != 1:
-        raise ValueError(f"Chess-only build expects one source per role object: {object_name}")
+    if not source_names:
+        raise ValueError(f"missing source for role object: {object_name}")
     src = EXPERIMENT_DIR / source_names[0]
     obj = _role_object_path(object_name)
     obj.parent.mkdir(parents=True, exist_ok=True)

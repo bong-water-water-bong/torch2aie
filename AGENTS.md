@@ -91,8 +91,95 @@ experiment diary.
   `v2` where the mask lane is true.
 - Keep the rounding mode explicit for bf16 paths:
   `::aie::set_rounding(aie::rounding_mode::conv_even)`.
+- `aie::load_v` / `aie::store_v` assume vector alignment. On AIE2P,
+  `vector<bfloat16,16>` needs 32-byte alignment. A MyLM compact packet payload
+  starts at `compact + 1` dword, only 4-byte aligned, so bf16 vector reads from
+  that payload must use `aie::load_unaligned_v<16>(ptr, 2)`.
+- `aie::store_unaligned_v` is only for genuinely unaligned destinations. For
+  c1r2 residual/down, hidden/output block bases are 32-byte aligned, so keep
+  `store_v` there and fix only the compact payload read side.
 - For matmul tiles, reuse the local `aie::mmul` template shapes before inventing
   a new microkernel. Current bf16 AIE2P emulation uses 8x8x8 shapes.
+
+## AIE LUT / Linear Approx
+
+- `aie::lut<4,...>` is not a plain linear array. For 32-bit values on AIE2P,
+  duplicate at 4-entry bank granularity:
+  `{e0,e1,e2,e3,e0,e1,e2,e3,e4,e5,e6,e7,e4,e5,e6,e7,...}`.
+  Duplicating only 2 entries causes segment aliases such as `0,3,0,3`.
+- For `aie::linear_approx<bfloat16, aie::lut<4, float, bfloat16>>`, the table
+  entry is `(slope, offset)` and the API computes `slope * input + offset`.
+  Slope storage is bf16-like; use a slope value whose low fp32 mantissa bits are
+  zero.
+- MyLM c6r2 SwiGLU indexes 64 SiLU segments by
+  `segment = clamp(floor(gate * 64), -512, 511) + 512 >> 4`. A vector
+  `linear_approx` implementation can pass `gate * 4` as the lookup input and
+  store `slope / 4` in the LUT, so the computed value remains
+  `slope * gate + offset`.
+- Always validate LUT layout with an index probe or isolated kernel before
+  trusting the source shape. A wrong LUT layout can still compile cleanly and
+  look vectorized in `.lst`.
+
+## MyLM Qwen3 c1r2 / c6r2 Reverse Notes
+
+- MyLM Main16 is one static dispatcher/body chain, not seven independent
+  projection programs. Normal mode runs `0x1870 -> 0x1e80 -> 0x2490 -> 0x2aa0`
+  with records `12 x 0x1`, `8 x 0x4`, `48 x 0x8`, `8 x 0x4`.
+- Treat Main16 body order and replay count as ABI. Header `0x4` is reused by O
+  and down, so do not distinguish those phases by inventing new packet IDs.
+- Production Main16 code should use fixed body shapes: Q/K/V fused as one
+  12-record body, then O, up/gate, and down. Q-only `phase_limit=1` is an
+  isolated microbench compatibility path, not the full-layer scheduler shape.
+- Static body duplication is acceptable when it matches the MyLM dispatcher
+  model and improves Chess scheduling determinism. Do not collapse it back to
+  dynamic `records/chunks_per_record` helpers just to reduce object size; first
+  compare opcode density, PM size, and NPU time against the MyLM-style gates.
+- Main16 isolated gates now cover the body chain directly:
+  `kernel-main16-q4nx-run` checks Q-only, `kernel-main16-q4nx-qkv-run` checks
+  the fused 12-record Q/K/V body, and `kernel-main16-q4nx-full-run` checks the
+  full `12/8/48/8` record chain.
+- MyLM c1r2 is the full-vector station: hidden/RMS1 -> 12 packet0 replays,
+  O residual + RMS2 -> 48 packet0 replays, down residual -> final hidden. The
+  normal layer path is selected by the host writing c1r2 mode 1 and releasing
+  L6.
+- c1r2 bd3 is a manual-header full-vector packet0 replay channel: one header
+  dword plus 2048 payload dwords. L3 release values are replay counts
+  `12`, `48`, and `1`; do not replace them with arbitrary host-visible tensors.
+- MyLM c1r2 residual/down vector add lowers to
+  `vlda.conv.fp32.bf16 -> vadd.f -> vst.conv.bf16.fp32`, with `crrnd` loaded
+  from local state around `0x73042`. A naive AIE API
+  `aie::add(bfloat16,bfloat16)` is not equivalent to scalar
+  `bf16_rne(float(a) + float(b))`.
+- c1r2 residual/down vector add is reachable with AIE API, no raw asm:
+  aligned hidden/output uses `aie::load_v<16>` / `aie::store_v`, compact payload
+  uses `aie::load_unaligned_v<16>(compact_payload + lane, 2)`, bf16 vectors are
+  converted to `aie::accum<accfloat,16>`, then `aie::add`, then
+  `store_v(sum.to_vector<bfloat16>())`. The verified opcode shape is
+  `VLDA.CONV.fp32.bf16 + VLDB/VSHIFT/VCONV.fp32.bf16 + VADD.f +
+  VST.CONV.bf16.fp32`.
+- Set `::aie::set_rounding(aie::rounding_mode::conv_even)` before c1r2 bf16
+  vector conversion/store. Without it the add-only gate writes correct data but
+  has 1-LSB bf16 mismatches versus scalar `bf16_rne`.
+- Do not implement c1r2 vector add by extracting vector lanes and scalar
+  storing them. Chess can schedule `ST.s16` before the corresponding
+  `VCONV/VEXTRACT`, writing stale registers. Use vector `store_v` for this path.
+- c1r2 vector add is the default production path; the old scalar residual/down
+  fallback and `--vector-add` wrapper path were removed. Verified gates:
+  `make -C examples/qwen3-decode-layer kernel-full-vector-add-run` and
+  `make -C examples/qwen3-decode-layer kernel-full-vector-run`. Representative
+  isolated full-vector time improved from the old scalar path at about
+  `3787 us` to about `2634 us` on this machine.
+- MyLM c6r2 is the SwiGLU slice station. One 512-dword input is two halves:
+  `up[512 bf16]` first, `gate[512 bf16]` second. It emits 512 bf16
+  `SiLU(gate) * up`, i.e. 256 dwords.
+- MyLM c6r2 disassembly shows the hot path shape:
+  `vfloor.s32.bf16`, clamp to `0x1ff`, `vldb.4x64`, `vmul.f`, and
+  `vst.conv.bf16.fp32`. This is the target opcode shape for the torch2aie
+  SwiGLU kernel.
+- The c6r2 input is assembled by the row1 compact tree, not direct 17-dword
+  records: per-column `17+16+16+16=65`, c1r1
+  `65+64+64+64=257`, then c6r2 DMA0 drops two headers to get 512 dwords.
+  Adjacent global packets must pair as up payload then gate payload.
 
 ## Direct mlir-aie Dialect
 

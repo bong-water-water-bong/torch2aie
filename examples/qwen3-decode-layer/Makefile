@@ -98,7 +98,101 @@ analyze-main16:
 
 .PHONY: analyze-kernels
 analyze-kernels:
-	${TORCH2AIE_PYTHON} ${srcdir}/analyze_kernel_chess.py ${KERNELS:%=--kernel %}
+	${TORCH2AIE_PYTHON} ${srcdir}/analyze_kernel_chess.py ${KERNELS:%=--kernel %} ${ANALYZE_ARGS}
+
+.PHONY: kernel-all-run
+kernel-all-run: kernel-postprocess-qkv-run kernel-full-vector-run kernel-edge-attention-run kernel-main16-q4nx-run kernel-swiglu-run
+
+.PHONY: kernel-all-build
+kernel-all-build: kernel-postprocess-qkv-build kernel-full-vector-build kernel-edge-attention-build kernel-main16-q4nx-build kernel-swiglu-build
+
+.PHONY: kernel-postprocess-qkv-run
+kernel-postprocess-qkv-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_postprocess_qkv.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH}
+
+.PHONY: kernel-postprocess-qkv-build
+kernel-postprocess-qkv-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_postprocess_qkv.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --build-only
+
+.PHONY: kernel-full-vector-run
+kernel-full-vector-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_full_vector_station.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH}
+
+.PHONY: kernel-full-vector-build
+kernel-full-vector-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_full_vector_station.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --build-only
+
+.PHONY: kernel-full-vector-add-run
+kernel-full-vector-add-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_full_vector_add.py
+
+.PHONY: kernel-full-vector-add-build
+kernel-full-vector-add-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_full_vector_add.py --build-only
+
+.PHONY: kernel-full-vector-profile-run
+kernel-full-vector-profile-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_full_vector_station.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --profile-cycles
+
+.PHONY: kernel-full-vector-profile-build
+kernel-full-vector-profile-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_full_vector_station.py --current-token ${CURRENT_TOKEN} --layer ${LAYER} --model-path ${MODEL_PATH} --profile-cycles --build-only
+
+.PHONY: kernel-edge-attention-run
+kernel-edge-attention-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_edge_attention.py
+
+.PHONY: kernel-edge-attention-build
+kernel-edge-attention-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_edge_attention.py --build-only
+
+.PHONY: kernel-edge-attention-profile-run
+kernel-edge-attention-profile-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_edge_attention.py --profile-cycles
+
+.PHONY: kernel-edge-attention-profile-build
+kernel-edge-attention-profile-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_edge_attention.py --profile-cycles --build-only
+
+.PHONY: kernel-main16-q4nx-run
+kernel-main16-q4nx-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py
+
+.PHONY: kernel-main16-q4nx-build
+kernel-main16-q4nx-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --build-only
+
+.PHONY: kernel-main16-q4nx-qkv-run
+kernel-main16-q4nx-qkv-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode qkv
+
+.PHONY: kernel-main16-q4nx-qkv-build
+kernel-main16-q4nx-qkv-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode qkv --build-only
+
+.PHONY: kernel-main16-q4nx-full-run
+kernel-main16-q4nx-full-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode full
+
+.PHONY: kernel-main16-q4nx-full-build
+kernel-main16-q4nx-full-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode full --build-only
+
+.PHONY: kernel-main16-q4nx-profile-run
+kernel-main16-q4nx-profile-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --profile-cycles
+
+.PHONY: kernel-main16-q4nx-profile-build
+kernel-main16-q4nx-profile-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --profile-cycles --build-only
+
+.PHONY: kernel-swiglu-run
+kernel-swiglu-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_swiglu.py
+
+.PHONY: kernel-swiglu-build
+kernel-swiglu-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_swiglu.py --build-only
 
 .PHONY: analyze-dataflow
 analyze-dataflow:
@@ -120,8 +214,26 @@ native-probe:
 	  strings build/native-probe/main16_native_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
 	done
 
+.PHONY: full-vector-add-probe
+full-vector-add-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/full_vector_add_probe.cc \
+	  -o build/native-probe/full_vector_add_probe.o
+	@for op in VLDA.CONV.FP32.BF16 VST.CONV.BF16.FP32 VADD.F VMUL.F VLDA VLDB VST NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/full_vector_add_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@strings build/native-probe/full_vector_add_probe.o.lst | \
+	  grep -Ein "full_vector_add|begin_of_loop|end_of_loop|VCONV|VADD\\.F|VLDA|VLDB|VST|VMUL\\.F" | head -120
+
 .PHONY: clean
 clean:
 	rm -rf build _build __pycache__ cases/__pycache__
-	rm -f edge_attention.o full_vector_station.o main_projection_q4nx_fast.o postprocess_qkv.o swiglu.o
+	rm -f edge_attention.o edge_attention_profile.o full_vector_station.o full_vector_station_profile.o main_projection_q4nx_fast.o main_projection_q4nx_profile.o postprocess_qkv.o swiglu.o
 	rm -f qwen3_decode_layer.exe
