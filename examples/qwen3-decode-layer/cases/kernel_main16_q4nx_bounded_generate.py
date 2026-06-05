@@ -1,4 +1,4 @@
-"""Generate an isolated bounded Main16 Q4NX exact-window microbench."""
+"""Generate the 8-group bounded Main16 Q4NX section-cell microbench."""
 
 from __future__ import annotations
 
@@ -6,14 +6,12 @@ from pathlib import Path
 
 from mlir_utils import flow, npu_address_patch, npu_push_queue, npu_sync, npu_writebd
 
-CASE_NAME = "qwen3-kernel-main16-q4nx-bounded"
-MAC_STYLES = ("single", "mac32-fold")
-BOUNDED_OBJECT = "main16_q4nx_exact_bounded_window_probe.o"
-BOUNDED_MAC32_OBJECT = "main16_q4nx_exact_bounded_window_mac32_probe.o"
-EXACT_8GROUP_OBJECT = "main16_q4nx_exact_8group_probe.o"
-EXACT_8GROUP_MAC32_OBJECT = "main16_q4nx_exact_8group_mac32_probe.o"
+CASE_NAME = "qwen3-kernel-main16-q4nx-bounded-8g-section-cell"
+SECTION_CELL_OBJECT = "main16_q4nx_section_cell_probe.o"
+SECTION_CELL_ENTRY = "main16_q4nx_section_cell_i32_probe"
 ROWS = 16
 GROUP_SIZE = 32
+GROUPS = 8
 Q4_GROUP_BYTES = GROUP_SIZE * (ROWS // 2)
 Q4_GROUP_DWORDS = Q4_GROUP_BYTES // 4
 SIDE_GROUP_DWORDS = ROWS // 2
@@ -21,17 +19,14 @@ ACT_GROUP_DWORDS = GROUP_SIZE // 2
 OUTPUT_DWORDS = ROWS // 2
 
 
-def _validate_mac_style(mac_style: str) -> None:
-    if mac_style not in MAC_STYLES:
-        raise ValueError(f"unsupported bounded mac_style={mac_style}; expected one of {MAC_STYLES}")
+def _validate_groups(groups: int) -> None:
+    if groups != GROUPS:
+        raise ValueError(f"unsupported section-cell bounded groups={groups}; expected {GROUPS}")
 
 
-def case_name_for(groups: int, mac_style: str = "single") -> str:
-    if groups not in (2, 3, 8):
-        raise ValueError(f"unsupported bounded window groups={groups}; expected 2, 3, or 8")
-    _validate_mac_style(mac_style)
-    suffix = "" if mac_style == "single" else f"-{mac_style}"
-    return f"{CASE_NAME}-{groups}g{suffix}"
+def case_name_for(groups: int = GROUPS) -> str:
+    _validate_groups(groups)
+    return CASE_NAME
 
 
 def q4_dwords(groups: int) -> int:
@@ -46,41 +41,22 @@ def activation_dwords(groups: int) -> int:
     return groups * ACT_GROUP_DWORDS
 
 
-def entry_name(groups: int, mac_style: str = "single") -> str:
-    _validate_mac_style(mac_style)
-    if groups == 2 and mac_style == "single":
-        return "main16_q4nx_exact_bounded_2g_i32_probe"
-    if groups == 3 and mac_style == "single":
-        return "main16_q4nx_exact_bounded_3g_i32_probe"
-    if groups == 2 and mac_style == "mac32-fold":
-        return "main16_q4nx_exact_bounded_2g_mac32_i32_probe"
-    if groups == 3 and mac_style == "mac32-fold":
-        return "main16_q4nx_exact_bounded_3g_mac32_i32_probe"
-    if groups == 8 and mac_style == "single":
-        return "main16_q4nx_exact_bounded_8g_i32_probe"
-    if groups == 8 and mac_style == "mac32-fold":
-        return "main16_q4nx_exact_bounded_8g_mac32_i32_probe"
-    raise ValueError(f"unsupported groups={groups}")
+def entry_name(groups: int = GROUPS) -> str:
+    _validate_groups(groups)
+    return SECTION_CELL_ENTRY
 
 
-def object_name_for(groups: int = 2, mac_style: str = "single") -> str:
-    if groups not in (2, 3, 8):
-        raise ValueError(f"unsupported bounded window groups={groups}; expected 2, 3, or 8")
-    _validate_mac_style(mac_style)
-    if groups == 8 and mac_style == "single":
-        return EXACT_8GROUP_OBJECT
-    if groups == 8 and mac_style == "mac32-fold":
-        return EXACT_8GROUP_MAC32_OBJECT
-    if mac_style == "mac32-fold":
-        return BOUNDED_MAC32_OBJECT
-    return BOUNDED_OBJECT
+def object_name_for(groups: int = GROUPS) -> str:
+    _validate_groups(groups)
+    return SECTION_CELL_OBJECT
 
 
-def _probe_tile(groups: int, mac_style: str) -> str:
+def _probe_tile(groups: int) -> str:
+    _validate_groups(groups)
     q4_words = q4_dwords(groups)
     side_words = side_dwords(groups)
     act_words = activation_dwords(groups)
-    entry = entry_name(groups, mac_style)
+    entry = entry_name(groups)
     return f"""
     %probe_q4 = aie.buffer(%probe) {{sym_name = "bounded_q4"}} : memref<{q4_words}xi32>
     %probe_scale = aie.buffer(%probe) {{sym_name = "bounded_scale"}} : memref<{side_words}xi32>
@@ -187,11 +163,12 @@ def _runtime_sequence(groups: int) -> str:
     )
 
 
-def generate_mlir(groups: int = 2, mac_style: str = "single") -> str:
-    case_name = case_name_for(groups, mac_style)
+def generate_mlir(groups: int = GROUPS) -> str:
+    _validate_groups(groups)
+    case_name = case_name_for(groups)
     experiment_dir = Path(__file__).parent.parent.resolve()
-    entry = entry_name(groups, mac_style)
-    object_name = object_name_for(groups, mac_style)
+    entry = entry_name(groups)
+    object_name = object_name_for(groups)
     q4_words = q4_dwords(groups)
     side_words = side_dwords(groups)
     act_words = activation_dwords(groups)
@@ -207,17 +184,18 @@ def generate_mlir(groups: int = 2, mac_style: str = "single") -> str:
 
     func.func private @{entry}(memref<{q4_words}xi32>, memref<{side_words}xi32>, memref<{side_words}xi32>, memref<{act_words}xi32>, memref<{OUTPUT_DWORDS}xi32>) attributes {{link_with = "{experiment_dir}/{object_name}"}}
 
-{_probe_tile(groups, mac_style)}
+{_probe_tile(groups)}
 {_runtime_sequence(groups)}
   }}
 }}
 """
 
 
-def validate_generated_mlir(mlir: str, groups: int = 2, mac_style: str = "single") -> list[str]:
+def validate_generated_mlir(mlir: str, groups: int = GROUPS) -> list[str]:
+    _validate_groups(groups)
     required = (
-        f"case marker {case_name_for(groups, mac_style)}",
-        entry_name(groups, mac_style),
+        f"case marker {case_name_for(groups)}",
+        entry_name(groups),
         f"memref<{q4_dwords(groups)}xi32>",
         f"memref<{side_dwords(groups)}xi32>",
         f"memref<{activation_dwords(groups)}xi32>",

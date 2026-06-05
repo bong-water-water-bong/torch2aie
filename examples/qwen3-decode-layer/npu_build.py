@@ -31,52 +31,13 @@ ROLE_KERNEL_SOURCES = {
     "edge_attention_profile.o": ("edge_attention_profile.cc", "edge_attention.cc"),
     "full_vector_station.o": (FULL_VECTOR_STATION_SOURCE,),
     "full_vector_station_profile.o": ("full_vector_station_profile.cc", "full_vector_station.cc"),
-    "main16_mac_elem_matrix_probe.o": (
-        "probes/main16_mac_elem_matrix_probe.cc",
+    "main16_q4nx_section_cell_probe.o": (
+        "probes/main16_q4nx_section_cell_probe.cc",
     ),
-    "main16_q4nx_exact_bounded_window_probe.o": (
-        "probes/main16_q4nx_exact_bounded_window_probe.cc",
-    ),
-    "main16_q4nx_exact_bounded_window_mac32_probe.o": (
-        "probes/main16_q4nx_exact_bounded_window_mac32_probe.cc",
-        "probes/main16_q4nx_exact_bounded_window_probe.cc",
-    ),
-    "main16_q4nx_exact_8group_probe.o": (
-        "probes/main16_q4nx_exact_8group_probe.cc",
-        "probes/main16_q4nx_exact_bounded_window_probe.cc",
-    ),
-    "main16_q4nx_exact_8group_mac32_probe.o": (
-        "probes/main16_q4nx_exact_8group_mac32_probe.cc",
-        "probes/main16_q4nx_exact_bounded_window_probe.cc",
-    ),
-    "main16_q4nx_exact_bounded_dual_mac32_probe.o": (
-        "probes/main16_q4nx_exact_bounded_dual_mac32_probe.cc",
-        "probes/main16_q4nx_exact_bounded_window_probe.cc",
-    ),
-    "main16_q4nx_exact_bounded_dual_2g_mac32_probe.o": (
-        "probes/main16_q4nx_exact_bounded_dual_2g_mac32_probe.cc",
-        "probes/main16_q4nx_exact_bounded_window_probe.cc",
-    ),
-    "main16_q4nx_exact_bounded_dual_3g_mac32_probe.o": (
-        "probes/main16_q4nx_exact_bounded_dual_3g_mac32_probe.cc",
-        "probes/main16_q4nx_exact_bounded_window_probe.cc",
-    ),
-    "main16_q4nx_exact_8group_dual_mac32_probe.o": (
-        "probes/main16_q4nx_exact_8group_dual_mac32_probe.cc",
-        "probes/main16_q4nx_exact_bounded_window_probe.cc",
-    ),
-    "main16_q4nx_record_cell_acc32_probe.o": (
-        "probes/main16_q4nx_record_cell_acc32_probe.cc",
+    "main16_q4nx_steady_cell_probe.o": (
+        "probes/main16_q4nx_steady_cell_probe.cc",
     ),
     "main_projection_q4nx_fast.o": (MAIN16_KERNEL_SOURCE,),
-    "main_projection_q4nx_acc32_one_record.o": (
-        "qwen3_decode_kernels_acc32_one_record.cc",
-        "qwen3_decode_kernels_acc32_impl.h",
-    ),
-    "main_projection_q4nx_acc32_static.o": (
-        "qwen3_decode_kernels_acc32_static.cc",
-        "qwen3_decode_kernels_acc32_impl.h",
-    ),
     "main_projection_q4nx_profile.o": ("qwen3_decode_kernels_profile.cc", "qwen3_decode_kernels.cc"),
     "postprocess_qkv.o": (POSTPROCESS_QKV_SOURCE,),
     "swiglu.o": (SWIGLU_SOURCE,),

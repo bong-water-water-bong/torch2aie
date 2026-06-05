@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-"""Run the bounded Main16 Q4NX exact-window NPU numerical microbench."""
+"""Run the bounded 8-group Main16 Q4NX section-cell NPU microbench."""
 
 from __future__ import annotations
 
@@ -84,16 +84,16 @@ def _bounded_oracle(
     return output.astype(bfloat16)
 
 
-def _build_kernel(groups: int, mac_style: str) -> tuple[Path, Path]:
-    build_dir = EXPERIMENT_DIR / "build" / generate.case_name_for(groups, mac_style)
+def _build_kernel(groups: int) -> tuple[Path, Path]:
+    build_dir = EXPERIMENT_DIR / "build" / generate.case_name_for(groups)
     build_dir.mkdir(parents=True, exist_ok=True)
     mlir_path = build_dir / "design.mlir"
     xclbin_path = build_dir / "design.xclbin"
     insts_path = build_dir / "design.bin"
 
-    mlir_text = generate.generate_mlir(groups=groups, mac_style=mac_style)
+    mlir_text = generate.generate_mlir(groups=groups)
     mlir_path.write_text(mlir_text)
-    errors = generate.validate_generated_mlir(mlir_text, groups=groups, mac_style=mac_style)
+    errors = generate.validate_generated_mlir(mlir_text, groups=groups)
     if errors:
         raise RuntimeError("\n".join(f"  BOUNDED-Q4NX STRUCTURE FAIL: {error}" for error in errors))
     npu_build.compile_mlir(mlir_path, xclbin_path, insts_path)
@@ -113,17 +113,17 @@ def _print_first_mismatch(expected: np.ndarray, got: np.ndarray) -> None:
     )
 
 
-def run(seed: int, groups: int, mac_style: str, build_only: bool) -> bool:
+def run(seed: int, groups: int, build_only: bool) -> bool:
     print("=" * 78)
-    print(f"qwen3 isolated kernel microbench: {generate.case_name_for(groups, mac_style)}")
+    print(f"qwen3 isolated kernel microbench: {generate.case_name_for(groups)}")
     print("=" * 78)
-    print(f"  kernel={generate.object_name_for(groups, mac_style)} only")
-    print(f"  ABI={groups} single-lane Q4NX groups -> 16 bf16 output lanes")
-    print(f"  mac_style={mac_style}")
+    print(f"  kernel={generate.object_name_for(groups)} only")
+    print("  ABI=8 single-lane Q4NX groups -> 16 bf16 output lanes")
+    print("  body=MyLM-named fill/fill_to_steady/steady/pre_drain/drain sections")
     print("  oracle=sequential exact Q4NX dequant and bf16 final store")
     print()
 
-    xclbin_path, insts_path = _build_kernel(groups, mac_style)
+    xclbin_path, insts_path = _build_kernel(groups)
     print(f"  xclbin={xclbin_path}")
     print(f"  insts={insts_path}")
     if build_only:
@@ -157,12 +157,11 @@ def run(seed: int, groups: int, mac_style: str, build_only: bool) -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="qwen3 bounded Main16 Q4NX kernel microbench")
     parser.add_argument("--seed", type=int, default=29)
-    parser.add_argument("--groups", type=int, choices=(2, 3, 8), default=2)
-    parser.add_argument("--mac-style", choices=generate.MAC_STYLES, default="single")
+    parser.add_argument("--groups", type=int, choices=(generate.GROUPS,), default=generate.GROUPS)
     parser.add_argument("--build-only", action="store_true")
     args = parser.parse_args()
 
-    ok = run(seed=args.seed, groups=args.groups, mac_style=args.mac_style, build_only=args.build_only)
+    ok = run(seed=args.seed, groups=args.groups, build_only=args.build_only)
     raise SystemExit(0 if ok else 1)
 
 

@@ -89,6 +89,7 @@ make -C examples/qwen3-decode-layer kernel-full-vector-profile-run
 make -C examples/qwen3-decode-layer kernel-edge-attention-run
 make -C examples/qwen3-decode-layer kernel-edge-attention-profile-run
 make -C examples/qwen3-decode-layer kernel-main16-q4nx-run
+make -C examples/qwen3-decode-layer kernel-main16-q4nx-steady-cell-run
 make -C examples/qwen3-decode-layer kernel-main16-q4nx-profile-run
 make -C examples/qwen3-decode-layer kernel-swiglu-run
 
@@ -96,7 +97,12 @@ make -C examples/qwen3-decode-layer analyze-kernels
 make -C examples/qwen3-decode-layer analyze-kernels KERNELS=postprocess_qkv.o
 make -C examples/qwen3-decode-layer analyze-main16
 make -C examples/qwen3-decode-layer analyze-dataflow
-make -C examples/qwen3-decode-layer native-probe
+make -C examples/qwen3-decode-layer main16-q4nx-api-cell-probe
+make -C examples/qwen3-decode-layer main16-q4nx-cell-state-carry-probe
+make -C examples/qwen3-decode-layer main16-q4nx-steady-combo-probe
+make -C examples/qwen3-decode-layer main16-q4nx-steady-section-probe
+make -C examples/qwen3-decode-layer main16-q4nx-steady-cell-probe
+make -C examples/qwen3-decode-layer main16-q4nx-section-cell-probe
 ```
 
 The generated runtime ABI is the IRON QKV-prefix ABI:
@@ -197,8 +203,9 @@ kernel before paying for a full 27-core build.  Current useful next targets are
 the `edge_attention.o` loop #3 warning and the `full_vector_station.o` loop #8
 warning.
 
-`native-probe` compiles a small Chess object that verifies the native intrinsic
-surface needed for the Q4NX hot loop.  Current verified rules:
+`main16-q4nx-cell-state-carry-probe` compiles a small Chess object that verifies
+the native intrinsic surface and register-cell carry patterns needed for the
+Q4NX hot loop.  Current verified rules:
 
 - `unpack(v64uint4)` and `unpack(v64uint8)` generate `VUNPACK`.
 - `mac_elem_16_conf(v32bfloat16, v32bfloat16, v16accfloat, ...)` generates
@@ -206,6 +213,113 @@ surface needed for the Q4NX hot loop.  Current verified rules:
 - To get `VEXTBCST.16`, load activation as `v32uint16`, use
   `broadcast_elem(v32uint16, idx)`, then cast the result to `v32bfloat16`.
   Broadcasting directly from `v32bfloat16` generates `VEXTBCST.32`.
+
+`main16-q4nx-api-cell-probe` is the minimal API/intrinsic baseline for the
+Main16 mixed-cell work.  It compiles the same one-MAC shape as four variants:
+raw full `v32bfloat16`, half-pack with `insert`, half-pack with `aie::concat`,
+and half-pack with raw `::concat`.  Current report:
+
+- raw full `v32bfloat16`: `VMAC.F=1`, `VMOV=0`, `VST=0`, `[sp] refs=0`.
+- all three mixed-half pack variants: `VMAC.F=1`, `VMOV=3`, `VST=0`,
+  `[sp] refs=0`.
+
+This proves Chess C++ can express MyLM-style mixed half cells without memory
+scratch, but `concat` is not cleaner than the explicit `insert` sequence.  The
+useful optimization frontier is therefore the Q4 load/dequant scheduling and
+pointer-cell lifetime, not replacing `insert` with `concat` or globally pinning
+registers.
+
+`main16-q4nx-steady-combo-probe` combines the successful primitive pieces into
+a 2-group steady_to_steady micro-probe.  It compiles five variants:
+
+- `q4_1g`: one exact Q4 coeff primitive plus one mixed-half MAC.
+- `q4_2g_mixed`: two Q4 groups and one cross-group mixed-half MAC.
+- `acc_concat`: two Q4 groups plus accumulator half/quadrant `extract` and
+  `concat`.
+- `addmac`: two Q4 groups plus `addmac_elem_32_conf`.
+- `combined`: Q4 primitive, mixed cells, accumulator concat, and addmac in one
+  object.
+
+Current report: all five variants are `VST=0` and `[sp] refs=0`.  The combined
+variant generates `VUPS.4X=2`, `VUNPACK=2`, `VEXTBCST.16=4`, `VMAC.F=2`,
+`VADDMAC.F=1`, `VCONV.BF16.FP32=12`, and `VMOV=9`.  This is a stronger signal
+than the isolated `/tmp` probes: Q4 primitive, accumulator quadrant movement,
+and addmac can coexist in Chess C++ without stack or scratch stores.
+
+The remaining steady-cell `[sp] refs=4` boundary is therefore not caused by any
+single primitive.  It appears when the expression is stretched into a longer
+8-group chain and two sequential dim-pair chains.  The section-window probe
+below narrows that down further: staged carry lifetimes are viable, but they
+must stay in short slot windows.
+
+`main16-q4nx-steady-section-probe` is the first attempt to express the MyLM
+group2 steady_to_steady section as raw-cell Chess C++ instead of as group-level
+exact dequant bodies.  The monolithic version tried to put the full single
+section into one C++ function: 8 Q4 expands, 32 lane broadcasts, 17 coefficient
+conversions, 33 MACs, 8 sub corrections, and one mul.  That shape reached
+`chess-backend` but did not finish in a reasonable probe window, which is itself
+a useful boundary: handing the full steady section to the backend as one large
+C++ DAG is still too coarse.
+
+The checked-in target therefore compiles small slot windows: `front`, `middle`,
+`back`, `schedule`, and `acc_schedule`.  They are deliberately smaller live
+ranges that approximate the group2 section in batches, plus two windows that
+check the MyLM-style adjacency constraints directly.  Current report:
+
+- `front`: `VUPS.4X=3`, `VUNPACK=3`, `VEXTBCST.16=12`, `VMAC.F=10`,
+  `VADDMAC.F=2`, `VCONV.BF16.FP32=9`, `VMUL.F=1`, `VADD=3`, `VSUB.F=4`,
+  `VST=0`, `[sp] refs=0`.
+- `middle`: `VUPS.4X=3`, `VUNPACK=3`, `VEXTBCST.16=12`, `VMAC.F=9`,
+  `VADDMAC.F=3`, `VCONV.BF16.FP32=9`, `VADD=3`, `VSUB.F=3`, `VST=0`,
+  `[sp] refs=0`.
+- `back`: `VUPS.4X=2`, `VUNPACK=2`, `VEXTBCST.16=8`, `VMAC.F=7`,
+  `VADDMAC.F=2`, `VCONV.BF16.FP32=6`, `VADD=2`, `VSUB.F=2`, `VST=0`,
+  `[sp] refs=0`.
+- `schedule`: consumes previous q cells first, then keeps q/dequant, mixed
+  half-cell construction, and nearby MACs in one short window.  It generates
+  `VUPS.4X=4`, `VUNPACK=4`, `VEXTBCST.16=7`, `VMAC.F=6`, `VADDMAC.F=2`,
+  `VCONV.BF16.FP32=9`, `VST=0`, `[sp] refs=0`.
+- `acc_schedule`: isolates accumulator half-cell carry through raw
+  `extract_v16accfloat`/`concat` and nearby MACs.  It generates `VMOV bm*`
+  moves, `VUPS.4X=3`, `VUNPACK=3`, `VMAC.F=4`, `VST=0`, `[sp] refs=0`.
+
+The sum of the three windows lands on the intended `8 VUPS / 8 VUNPACK /
+32 VEXTBCST / 8 VADD` scale and keeps stack/scratch clean, but Chess fuses some
+source MACs into `VADDMAC.F` and the conversion count includes the probe's final
+sink.  A deliberately over-combined schedule window spilled to stack; splitting
+that shape back into `schedule` and `acc_schedule` returned to `VST=0` and
+`[sp] refs=0`.  The important rule for production Main16 is therefore: express
+q-cell, mixed half-cell, and accumulator-cell carry as adjacent inline slot
+windows, not as one large C++ DAG or a long-lived State object.
+
+`kernel-main16-q4nx-bounded-run` is now the 8-group section-cell exact numeric
+gate.  It uses the MyLM section names `fill`, `fill_to_steady`,
+`steady_to_steady`, `pre_drain`, and `drain`, but keeps the current exact Q4NX
+oracle before replacing the production Main16 body.
+
+`kernel-main16-q4nx-steady-cell-run` is the narrow mixed-half transition gate:
+eight Q4NX groups produce one `v32accfloat` result through two dim-pairs, each
+with seven chained steady transitions.  The low half consumes the previous
+group's high coefficient cell, and the high half consumes the current group's
+low coefficient cell.  This is the first numeric gate for the MyLM-style
+cell-level carry expression.
+
+Current Chess boundary from this gate: the two-pair exact chain is numerically
+stable on NPU and generates no vector scratch `VST`, but it still saves a q4
+pointer cell to stack (`[sp] refs=4`).  Pinning the raw `v32accfloat` accumulator
+with `chess_storage(dm*)` fails backend scheduling, and pinning mixed
+`aie::vector<bfloat16, 32>` operands to `ex*` hits register type mismatches.
+Do not copy the GEMM `chess_storage` pattern blindly onto these raw Main16 cell
+types; first prove the resulting `.lst` keeps both data cells and pointer cells
+off stack.
+
+Also avoid three tempting rewrites that made the report worse: precomputing the
+second q4 pair pointer created longer pointer live ranges and spilled data
+cells, annotating the q4 pointer with `chess_storage(P)` increased stack use,
+and interleaving both dim-pairs by group removed the base-pointer pattern but
+kept too many carry cells live at once.  The current best 2-pair expression is
+therefore the simple sequential pair chain; the next useful experiment is a
+lower-level q4 load/cell primitive, not more C++ pointer hoisting.
 
 After weight stream/full-graph overlap is fixed, the next Main16 compute step
 is a MyLM-style fill/steady/drain Q4NX microkernel that interleaves load,

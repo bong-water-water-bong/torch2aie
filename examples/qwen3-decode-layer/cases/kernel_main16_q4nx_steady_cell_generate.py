@@ -1,4 +1,4 @@
-"""Generate the Main16 Q4NX record-cell acc32 NPU numerical microbench."""
+"""Generate the Main16 Q4NX steady-cell mixed-half microbench."""
 
 from __future__ import annotations
 
@@ -6,23 +6,18 @@ from pathlib import Path
 
 from mlir_utils import flow, npu_address_patch, npu_push_queue, npu_sync, npu_writebd
 
-CASE_NAME = "qwen3-kernel-main16-q4nx-record-cell-acc32"
-OBJECT_NAME = "main16_q4nx_record_cell_acc32_probe.o"
-ENTRY_NAME = "main16_q4nx_record_cell_2g_acc32_i32_probe"
-ROWS_PER_LANE = 16
-LANES = 2
-ROWS = ROWS_PER_LANE * LANES
-GROUPS = 2
+CASE_NAME = "qwen3-kernel-main16-q4nx-steady-cell-7t-2p"
+OBJECT_NAME = "main16_q4nx_steady_cell_probe.o"
+ENTRY_NAME = "main16_q4nx_steady_cell_i32_probe"
+ROWS = 16
 GROUP_SIZE = 32
-Q4_GROUP_BYTES_PER_LANE = GROUP_SIZE * (ROWS_PER_LANE // 2)
-Q4_DWORDS = LANES * GROUPS * Q4_GROUP_BYTES_PER_LANE // 4
-SIDE_DWORDS = GROUPS * ROWS // 2
-ACTIVATION_DWORDS = GROUPS * GROUP_SIZE // 2
-OUTPUT_DWORDS = 1 + ROWS // 2
-
-
-def case_name() -> str:
-    return CASE_NAME
+GROUPS = 8
+PAIRS = 2
+Q4_GROUP_BYTES = GROUP_SIZE * (ROWS // 2)
+Q4_DWORDS = (GROUPS * Q4_GROUP_BYTES) // 4
+SIDE_DWORDS = (GROUPS * ROWS) // 2
+ACTIVATION_DWORDS = (GROUPS * GROUP_SIZE) // 2
+OUTPUT_DWORDS = GROUP_SIZE // 2
 
 
 def generate_mlir() -> str:
@@ -39,21 +34,21 @@ def generate_mlir() -> str:
 
     func.func private @{ENTRY_NAME}(memref<{Q4_DWORDS}xi32>, memref<{SIDE_DWORDS}xi32>, memref<{SIDE_DWORDS}xi32>, memref<{ACTIVATION_DWORDS}xi32>, memref<{OUTPUT_DWORDS}xi32>) attributes {{link_with = "{experiment_dir}/{OBJECT_NAME}"}}
 
-    %probe_q4 = aie.buffer(%probe) {{sym_name = "record_cell_q4"}} : memref<{Q4_DWORDS}xi32>
-    %probe_scale = aie.buffer(%probe) {{sym_name = "record_cell_scale"}} : memref<{SIDE_DWORDS}xi32>
-    %probe_offset = aie.buffer(%probe) {{sym_name = "record_cell_offset"}} : memref<{SIDE_DWORDS}xi32>
-    %probe_activation = aie.buffer(%probe) {{sym_name = "record_cell_activation"}} : memref<{ACTIVATION_DWORDS}xi32>
-    %probe_output = aie.buffer(%probe) {{sym_name = "record_cell_output"}} : memref<{OUTPUT_DWORDS}xi32>
-    %probe_q4_empty = aie.lock(%probe, 0) {{init = 1 : i32, sym_name = "record_cell_q4_empty"}}
-    %probe_q4_full = aie.lock(%probe, 1) {{init = 0 : i32, sym_name = "record_cell_q4_full"}}
-    %probe_scale_empty = aie.lock(%probe, 2) {{init = 1 : i32, sym_name = "record_cell_scale_empty"}}
-    %probe_scale_full = aie.lock(%probe, 3) {{init = 0 : i32, sym_name = "record_cell_scale_full"}}
-    %probe_offset_empty = aie.lock(%probe, 4) {{init = 1 : i32, sym_name = "record_cell_offset_empty"}}
-    %probe_offset_full = aie.lock(%probe, 5) {{init = 0 : i32, sym_name = "record_cell_offset_full"}}
-    %probe_activation_empty = aie.lock(%probe, 6) {{init = 1 : i32, sym_name = "record_cell_activation_empty"}}
-    %probe_activation_full = aie.lock(%probe, 7) {{init = 0 : i32, sym_name = "record_cell_activation_full"}}
-    %probe_output_empty = aie.lock(%probe, 8) {{init = 1 : i32, sym_name = "record_cell_output_empty"}}
-    %probe_output_full = aie.lock(%probe, 9) {{init = 0 : i32, sym_name = "record_cell_output_full"}}
+    %probe_q4 = aie.buffer(%probe) {{sym_name = "steady_cell_q4"}} : memref<{Q4_DWORDS}xi32>
+    %probe_scale = aie.buffer(%probe) {{sym_name = "steady_cell_scale"}} : memref<{SIDE_DWORDS}xi32>
+    %probe_offset = aie.buffer(%probe) {{sym_name = "steady_cell_offset"}} : memref<{SIDE_DWORDS}xi32>
+    %probe_activation = aie.buffer(%probe) {{sym_name = "steady_cell_activation"}} : memref<{ACTIVATION_DWORDS}xi32>
+    %probe_output = aie.buffer(%probe) {{sym_name = "steady_cell_output"}} : memref<{OUTPUT_DWORDS}xi32>
+    %probe_q4_empty = aie.lock(%probe, 0) {{init = 1 : i32, sym_name = "steady_cell_q4_empty"}}
+    %probe_q4_full = aie.lock(%probe, 1) {{init = 0 : i32, sym_name = "steady_cell_q4_full"}}
+    %probe_scale_empty = aie.lock(%probe, 2) {{init = 1 : i32, sym_name = "steady_cell_scale_empty"}}
+    %probe_scale_full = aie.lock(%probe, 3) {{init = 0 : i32, sym_name = "steady_cell_scale_full"}}
+    %probe_offset_empty = aie.lock(%probe, 4) {{init = 1 : i32, sym_name = "steady_cell_offset_empty"}}
+    %probe_offset_full = aie.lock(%probe, 5) {{init = 0 : i32, sym_name = "steady_cell_offset_full"}}
+    %probe_activation_empty = aie.lock(%probe, 6) {{init = 1 : i32, sym_name = "steady_cell_activation_empty"}}
+    %probe_activation_full = aie.lock(%probe, 7) {{init = 0 : i32, sym_name = "steady_cell_activation_full"}}
+    %probe_output_empty = aie.lock(%probe, 8) {{init = 1 : i32, sym_name = "steady_cell_output_empty"}}
+    %probe_output_full = aie.lock(%probe, 9) {{init = 0 : i32, sym_name = "steady_cell_output_full"}}
 
     %probe_core = aie.core(%probe) {{
       aie.use_lock(%probe_q4_full, AcquireGreaterEqual, 1)
@@ -142,5 +137,6 @@ def validate_generated_mlir(mlir: str) -> list[str]:
         f"memref<{SIDE_DWORDS}xi32>",
         f"memref<{ACTIVATION_DWORDS}xi32>",
         f"memref<{OUTPUT_DWORDS}xi32>",
+        "aie.runtime_sequence(%q4",
     )
-    return [f"missing record-cell Main16 marker: {marker}" for marker in required if marker not in mlir]
+    return [f"missing steady-cell marker: {marker}" for marker in required if marker not in mlir]

@@ -8,13 +8,14 @@ namespace {
 
 constexpr int kRows = 16;
 constexpr int kGroupSize = 32;
+constexpr int kGroups = 8;
 constexpr int kQ4QuadBytes = kRows * 2;
 constexpr int kQ4GroupBytes = kGroupSize * (kRows / 2);
 
 using Vec16 = aie::vector<bfloat16, kRows>;
 using Vec32 = aie::vector<bfloat16, kGroupSize>;
 using Vec64 = aie::vector<bfloat16, kRows * 4>;
-using Acc32 = aie::accum<accfloat, kGroupSize>;
+using Acc16 = aie::accum<accfloat, kRows>;
 
 __attribute__((always_inline)) static inline Vec64
 load_q4_quad(const uint8_t *__restrict q4_group, int dim_quad) {
@@ -32,127 +33,63 @@ dequant_half(const Vec16 &q, const Vec16 &scale, const Vec16 &offset) {
   return aie::add(scaled.template to_vector<bfloat16>(), offset);
 }
 
-__attribute__((always_inline)) static inline Vec16
-act_lane(const Vec32 &act_group, int lane) {
-  return aie::broadcast<bfloat16, kRows>(act_group.get(lane));
+__attribute__((always_inline)) static inline Acc16
+mac_lane(Acc16 acc, const Vec16 &coeff, const Vec32 &act_group, int lane) {
+  Vec16 act = aie::broadcast<bfloat16, kRows>(act_group.get(lane));
+  return aie::mac(acc, coeff, act);
 }
 
-#define MAIN16_LOAD_PAIR(GROUP, DIM_QUAD, DIM, COEFF, ACT_PAIR)               \
-  do {                                                                        \
-    Vec16 scale_v = aie::load_v<kRows, aie_dm_resource::a>(                  \
-        scale + (GROUP) * kGroupSize);                                        \
-    Vec16 offset_v = aie::load_v<kRows, aie_dm_resource::b>(                 \
-        offset + (GROUP) * kGroupSize);                                       \
-    Vec32 act_group_v = aie::load_v<kGroupSize, aie_dm_resource::c>(          \
-        activation + (GROUP) * kGroupSize);                                   \
-    Vec64 q_v = load_q4_quad(q4 + (GROUP) * kQ4GroupBytes, (DIM_QUAD));       \
-    (COEFF).insert(0, dequant_half(q_v.template extract<kRows>(0), scale_v,   \
-                                   offset_v));                                \
-    (COEFF).insert(1, dequant_half(q_v.template extract<kRows>(1), scale_v,   \
-                                   offset_v));                                \
-    (ACT_PAIR).insert(0, act_lane(act_group_v, (DIM)));                       \
-    (ACT_PAIR).insert(1, act_lane(act_group_v, (DIM) + 1));                   \
-  } while (0)
+__attribute__((always_inline)) static inline Acc16
+consume_quad(Acc16 acc, const uint8_t *__restrict q4_group, int dim_quad,
+             const Vec16 &scale, const Vec16 &offset,
+             const Vec32 &act_group) {
+  Vec64 q = load_q4_quad(q4_group, dim_quad);
+  const int dim = dim_quad * 4;
+  acc = mac_lane(acc,
+                 dequant_half(q.template extract<kRows>(0), scale, offset),
+                 act_group, dim + 0);
+  acc = mac_lane(acc,
+                 dequant_half(q.template extract<kRows>(1), scale, offset),
+                 act_group, dim + 1);
+  acc = mac_lane(acc,
+                 dequant_half(q.template extract<kRows>(2), scale, offset),
+                 act_group, dim + 2);
+  acc = mac_lane(acc,
+                 dequant_half(q.template extract<kRows>(3), scale, offset),
+                 act_group, dim + 3);
+  return acc;
+}
 
-#define MAIN16_MAC(ACC, COEFF, ACT_PAIR)                                      \
-  do {                                                                        \
-    (ACC) = aie::mac((ACC), (COEFF), (ACT_PAIR));                             \
-  } while (0)
+template <int Group>
+__attribute__((always_inline)) static inline Acc16
+consume_group(Acc16 acc, const uint8_t *__restrict q4,
+              const bfloat16 *__restrict scale,
+              const bfloat16 *__restrict offset,
+              const bfloat16 *__restrict activation) {
+  static_assert(Group >= 0 && Group < kGroups);
+  const uint8_t *__restrict q4_group = q4 + Group * kQ4GroupBytes;
+  Vec16 scale_v =
+      aie::load_v<kRows, aie_dm_resource::a>(scale + Group * kRows);
+  Vec16 offset_v =
+      aie::load_v<kRows, aie_dm_resource::b>(offset + Group * kRows);
+  Vec32 act_group =
+      aie::load_v<kGroupSize, aie_dm_resource::c>(
+          activation + Group * kGroupSize);
 
-#ifndef MAIN16_SECTION_CELL_LANES
-#define MAIN16_SECTION_CELL_LANES 1
-#endif
-
-#ifndef MAIN16_SECTION_CELL_MIXED
-#define MAIN16_SECTION_CELL_MIXED 0
-#endif
-
-#ifndef MAIN16_SECTION_CELL_GROUPS
-#define MAIN16_SECTION_CELL_GROUPS 2
-#endif
-
-#ifndef MAIN16_SECTION_CELL_PIN
-#define MAIN16_SECTION_CELL_PIN 0
-#endif
-
-#if MAIN16_SECTION_CELL_MIXED
-#define MAIN16_MIX_HALVES(DST, OLD, NEW)                                      \
-  do {                                                                        \
-    (DST).insert(0, (OLD).template extract<kRows>(1));                        \
-    (DST).insert(1, (NEW).template extract<kRows>(0));                        \
-  } while (0)
-#else
-#define MAIN16_MIX_HALVES(DST, OLD, NEW)                                      \
-  do {                                                                        \
-    (void)(OLD);                                                              \
-    (DST) = (NEW);                                                            \
-  } while (0)
-#endif
-
-#define MAIN16_FILL_G0()                                                      \
-  do {                                                                        \
-    MAIN16_LOAD_PAIR(0, 0, 0, vec3, vec2);                                    \
-    MAIN16_MAC(acc1, vec3, vec2);                                             \
-    if constexpr (MAIN16_SECTION_CELL_LANES > 1) {                            \
-    MAIN16_LOAD_PAIR(0, 1, 4, vec4, vec6);                                    \
-    MAIN16_MAC(acc3, vec4, vec6);                                             \
-    }                                                                         \
-  } while (0)
-
-#define MAIN16_FILL_TO_STEADY_G1()                                            \
-  do {                                                                        \
-    MAIN16_LOAD_PAIR(1, 0, 0, vec8, vec9);                                    \
-    MAIN16_MIX_HALVES(vec0, vec3, vec8);                                      \
-    MAIN16_MIX_HALVES(vec10, vec2, vec9);                                     \
-    MAIN16_MAC(acc1, vec0, vec10);                                            \
-    vec3 = vec8;                                                              \
-    vec2 = vec9;                                                              \
-    if constexpr (MAIN16_SECTION_CELL_LANES > 1) {                            \
-    MAIN16_LOAD_PAIR(1, 1, 4, vec8, vec9);                                    \
-    MAIN16_MIX_HALVES(vec0, vec4, vec8);                                      \
-    MAIN16_MIX_HALVES(vec10, vec6, vec9);                                     \
-    MAIN16_MAC(acc3, vec0, vec10);                                            \
-    vec4 = vec8;                                                              \
-    vec6 = vec9;                                                              \
-    }                                                                         \
-  } while (0)
-
-#define MAIN16_STEADY_TO_STEADY_G(GROUP)                                      \
-  do {                                                                        \
-    MAIN16_MAC(acc1, vec3, vec2);                                             \
-    MAIN16_LOAD_PAIR((GROUP), 0, 0, vec8, vec9);                              \
-    MAIN16_MIX_HALVES(vec0, vec3, vec8);                                      \
-    MAIN16_MIX_HALVES(vec10, vec2, vec9);                                     \
-    MAIN16_MAC(acc1, vec0, vec10);                                            \
-    vec3 = vec8;                                                              \
-    vec2 = vec9;                                                              \
-    if constexpr (MAIN16_SECTION_CELL_LANES > 1) {                            \
-    MAIN16_MAC(acc3, vec4, vec6);                                             \
-    MAIN16_LOAD_PAIR((GROUP), 1, 4, vec8, vec9);                              \
-    MAIN16_MIX_HALVES(vec0, vec4, vec8);                                      \
-    MAIN16_MIX_HALVES(vec10, vec6, vec9);                                     \
-    MAIN16_MAC(acc3, vec0, vec10);                                            \
-    vec4 = vec8;                                                              \
-    vec6 = vec9;                                                              \
-    }                                                                         \
-  } while (0)
-
-#define MAIN16_PRE_DRAIN_G6() MAIN16_STEADY_TO_STEADY_G(6)
-
-#define MAIN16_DRAIN_G7()                                                     \
-  do {                                                                        \
-    MAIN16_STEADY_TO_STEADY_G(7);                                             \
-    MAIN16_MAC(acc1, vec3, vec2);                                             \
-    if constexpr (MAIN16_SECTION_CELL_LANES > 1) {                            \
-    MAIN16_MAC(acc3, vec4, vec6);                                             \
-    }                                                                         \
-  } while (0)
+  acc = consume_quad(acc, q4_group, 0, scale_v, offset_v, act_group);
+  acc = consume_quad(acc, q4_group, 1, scale_v, offset_v, act_group);
+  acc = consume_quad(acc, q4_group, 2, scale_v, offset_v, act_group);
+  acc = consume_quad(acc, q4_group, 3, scale_v, offset_v, act_group);
+  acc = consume_quad(acc, q4_group, 4, scale_v, offset_v, act_group);
+  acc = consume_quad(acc, q4_group, 5, scale_v, offset_v, act_group);
+  acc = consume_quad(acc, q4_group, 6, scale_v, offset_v, act_group);
+  acc = consume_quad(acc, q4_group, 7, scale_v, offset_v, act_group);
+  return acc;
+}
 
 __attribute__((always_inline)) static inline void
-store_acc_pair(const Acc32 &acc1, const Acc32 &acc3,
-               bfloat16 *__restrict output) {
-  aie::store_v(output, acc1.template to_vector<bfloat16>());
-  aie::store_v(output + kGroupSize, acc3.template to_vector<bfloat16>());
+store_acc(const Acc16 &acc, bfloat16 *__restrict output) {
+  aie::store_v(output, acc.template to_vector<bfloat16>());
 }
 
 } // namespace
@@ -174,54 +111,18 @@ void main16_q4nx_section_cell_i32_probe(
       reinterpret_cast<const bfloat16 *>(activation_words);
   bfloat16 *__restrict output = reinterpret_cast<bfloat16 *>(output_words);
 
-  Vec32 vec0;
-#if MAIN16_SECTION_CELL_PIN
-  Vec32 chess_storage(x2) vec2;
-  Vec32 chess_storage(x3) vec3;
-  Acc32 chess_storage(dm1) acc1 = aie::zeros<accfloat, kGroupSize>();
-#else
-  Vec32 vec2;
-  Vec32 vec3;
-  Acc32 acc1 = aie::zeros<accfloat, kGroupSize>();
-#endif
-  Vec32 vec4;
-  Vec32 vec6;
-  Vec32 vec8;
-  Vec32 vec9;
-  Vec32 vec10;
+  Acc16 acc = aie::zeros<accfloat, kRows>();
 
-  Acc32 acc3 = aie::zeros<accfloat, kGroupSize>();
+  acc = consume_group<0>(acc, q4, scale, offset, activation); // fill_g0
+  acc = consume_group<1>(acc, q4, scale, offset, activation); // fill_to_steady_g1
+  acc = consume_group<2>(acc, q4, scale, offset, activation); // steady_to_steady_g2
+  acc = consume_group<3>(acc, q4, scale, offset, activation); // steady_to_steady_g3
+  acc = consume_group<4>(acc, q4, scale, offset, activation); // steady_to_steady_g4
+  acc = consume_group<5>(acc, q4, scale, offset, activation); // steady_to_steady_g5
+  acc = consume_group<6>(acc, q4, scale, offset, activation); // pre_drain_g6
+  acc = consume_group<7>(acc, q4, scale, offset, activation); // drain_g7
 
-  static_assert(MAIN16_SECTION_CELL_GROUPS >= 1 &&
-                    MAIN16_SECTION_CELL_GROUPS <= 8,
-                "MAIN16_SECTION_CELL_GROUPS must be in [1, 8]");
-
-  MAIN16_FILL_G0();
-  if constexpr (MAIN16_SECTION_CELL_GROUPS >= 2) {
-    MAIN16_FILL_TO_STEADY_G1();
-  }
-  if constexpr (MAIN16_SECTION_CELL_GROUPS >= 3) {
-    MAIN16_STEADY_TO_STEADY_G(2);
-  }
-  if constexpr (MAIN16_SECTION_CELL_GROUPS >= 4) {
-    MAIN16_STEADY_TO_STEADY_G(3);
-  }
-  if constexpr (MAIN16_SECTION_CELL_GROUPS >= 5) {
-    MAIN16_STEADY_TO_STEADY_G(4);
-  }
-  if constexpr (MAIN16_SECTION_CELL_GROUPS >= 6) {
-    MAIN16_STEADY_TO_STEADY_G(5);
-  }
-  if constexpr (MAIN16_SECTION_CELL_GROUPS >= 7) {
-    MAIN16_PRE_DRAIN_G6();
-  }
-  if constexpr (MAIN16_SECTION_CELL_GROUPS >= 8) {
-    MAIN16_DRAIN_G7();
-  } else if constexpr (MAIN16_SECTION_CELL_GROUPS >= 2) {
-    MAIN16_MAC(acc1, vec3, vec2);
-  }
-
-  store_acc_pair(acc1, acc3, output);
+  store_acc(acc, output);
 }
 
 } // extern "C"
