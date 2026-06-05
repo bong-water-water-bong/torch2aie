@@ -89,6 +89,8 @@ make -C examples/qwen3-decode-layer kernel-full-vector-profile-run
 make -C examples/qwen3-decode-layer kernel-edge-attention-run
 make -C examples/qwen3-decode-layer kernel-edge-attention-profile-run
 make -C examples/qwen3-decode-layer kernel-main16-q4nx-run
+make -C examples/qwen3-decode-layer kernel-main16-q4nx-chunk-slot-run
+make -C examples/qwen3-decode-layer kernel-main16-q4nx-slot-scheduler-run
 make -C examples/qwen3-decode-layer kernel-main16-q4nx-steady-cell-run
 make -C examples/qwen3-decode-layer kernel-main16-q4nx-profile-run
 make -C examples/qwen3-decode-layer kernel-swiglu-run
@@ -99,9 +101,11 @@ make -C examples/qwen3-decode-layer analyze-main16
 make -C examples/qwen3-decode-layer analyze-dataflow
 make -C examples/qwen3-decode-layer main16-q4nx-api-cell-probe
 make -C examples/qwen3-decode-layer main16-q4nx-cell-state-carry-probe
+make -C examples/qwen3-decode-layer main16-q4nx-chunk-slot-probe
 make -C examples/qwen3-decode-layer main16-q4nx-steady-combo-probe
 make -C examples/qwen3-decode-layer main16-q4nx-steady-section-probe
 make -C examples/qwen3-decode-layer main16-q4nx-steady-cell-probe
+make -C examples/qwen3-decode-layer main16-q4nx-slot-window-sep-offset-probe
 make -C examples/qwen3-decode-layer main16-q4nx-section-cell-probe
 ```
 
@@ -135,6 +139,19 @@ passes.  Current isolated gates:
 - `kernel-main16-q4nx-run`: links only `main_projection_q4nx_fast.o`; feeds one
   Main16 tile with a full Q phase activation/weight ping-pong stream; checks
   the eight strict 17-dword MyLM records against the Q4NX CPU oracle.
+- `kernel-main16-q4nx-chunk-slot-run`: links only
+  `main16_q4nx_chunk_slot_probe.o`; feeds the production one-chunk ABI
+  (`128` dword activation plus `1280` dword Q4NX weight) and checks the
+  16-dword record payload against the exact Q4NX CPU oracle.  Current local
+  result: `504.5 us`, `mismatches=0`.
+- `kernel-main16-q4nx-slot-scheduler-run`: builds the isolated Main16 Q-mode
+  scheduler with `QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_kernels_chunk_slot.cc`.
+  It preserves the production ping/pong locks, 16 chunks per record, record
+  header ABI, and eight Q records, but swaps the hot chunk body to the acc32
+  chunk-slot implementation.  Current local result: `1511.1 us`,
+  `mismatches=0`.  The default production scheduler on the same gate is
+  `1127.7 us`, so this variant is a correctness/ABI bridge, not a replacement
+  yet.
 - `kernel-main16-q4nx-profile-run`: links only
   `main_projection_q4nx_profile.o`; feeds the same Q phase stream but writes
   debug cycle records on the 17-dword output path.  This is a diagnostic gate,
@@ -291,6 +308,60 @@ that shape back into `schedule` and `acc_schedule` returned to `VST=0` and
 `[sp] refs=0`.  The important rule for production Main16 is therefore: express
 q-cell, mixed half-cell, and accumulator-cell carry as adjacent inline slot
 windows, not as one large C++ DAG or a long-lived State object.
+
+`main16-q4nx-chunk-slot-probe` is the first production-layout bridge from those
+section probes back to the real Main16 chunk ABI.  It consumes one real
+`1280`-dword Q4NX weight chunk and one real `128`-dword activation chunk, packs
+the low/high 16-row halves into one `v32accfloat`, and emits the exact 16-dword
+record payload.  The fully unrolled C++ version was too large for the backend
+probe window; the checked-in fixed trip-count loop version compiles with
+`VST=0`, `[sp] refs=0`, and passes the NPU strict oracle.  This is the correct
+baseline for the next step: selectively replace the loop body with short
+slot-window sections while keeping this production ABI gate green.
+
+`main16-q4nx-slot-window-probe` is the narrower production-layout slot-window
+gate.  It uses the same one-chunk ABI but computes only group0's first small
+window, so the `.lst` directly tests whether the hot body can be written as
+`consume previous coeff cell -> produce current coeff cell -> nearby MAC ->
+carry next cell`.  Current boundary:
+
+- `pair_limit=2`: clean native report (`VST=0`, `[sp] refs=0`) and strict NPU
+  validation through `kernel-main16-q4nx-slot-window-run`
+  (`664.6 us`, `mismatches=0`).
+- `pair_limit=4` without a separator enters a long backend search; with
+  `chess_separator_scheduler()` between pair windows it compiles cleanly
+  (`VST=0`, `[sp] refs=0`) but with more NOPs.
+- `pair_limit=8` also stays clean with separators (`VST=0`, `[sp] refs=0`,
+  `NOPX=135`).
+- `pair_limit=16` with separators crosses the current live-range boundary
+  (`VST=15`, `[sp] refs=68`).
+- A runtime loop and an `aie::pipelined_loop` peeled form using full
+  `RawVec carry_coeff + RawVec carry_act` both spill.  The loop syntax is not
+  enough; the carried state must be reduced to smaller half/cell variables
+  before this can become a production Main16 body.
+- `main16-q4nx-slot-window-sep-offset-probe` keeps separator-offset experiments
+  in a separate source file so new helper shapes do not pollute this baseline.
+  `chess_separator_scheduler(-4)` is the best current local fence: for
+  `pair_limit=4`, hard separator `NOPX=57` becomes `51`; for `pair_limit=8`,
+  hard separator `NOPX=135` becomes `122`; both stay `VST=0`, `[sp] refs=0`.
+  At `pair_limit=16`, `-4` lowers NOPX (`278 -> 249`) but does not remove spill
+  (`VST=15`, `[sp] refs=68`).
+
+`qwen3_decode_kernels_chunk_slot.cc` extends the same acc32 chunk-slot body to
+the real Main16 scheduler ABI.  It has already exposed one important production
+detail: a 32-lane vector store to `record + 1` overwrites the header because the
+payload is not vector-aligned; record payload stores must remain two 16-lane
+stores, matching the default production kernel.  The variant is numerically
+correct but currently slower than the default scheduler, so do not replace
+`qwen3_decode_kernels.cc` with it wholesale.  Use it as the next optimization
+surface: replace its fixed trip-count loop body with proven short slot-window
+sections and keep comparing against the default Q-mode gate.
+
+The chunk-slot quad-unroll knob is currently bounded: `UNROLL_QUADS=1` keeps the
+native probe clean (`VST=0`, `[sp] refs=0`) but made the real Q-mode scheduler
+slower (`1530.2 us`, strict pass) than the previous chunk-slot result
+(`~1511 us`).  `UNROLL_QUADS=2` spills in native (`VST=4`, `[sp] refs=10`).
+Leave the default at zero until a replacement body wins the NPU gate.
 
 `kernel-main16-q4nx-bounded-run` is now the 8-group section-cell exact numeric
 gate.  It uses the MyLM section names `fill`, `fill_to_steady`,

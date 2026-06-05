@@ -186,6 +186,30 @@ kernel-main16-q4nx-bounded-run:
 kernel-main16-q4nx-bounded-build:
 	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_bounded.py --build-only
 
+.PHONY: kernel-main16-q4nx-chunk-slot-run
+kernel-main16-q4nx-chunk-slot-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_chunk_slot.py
+
+.PHONY: kernel-main16-q4nx-chunk-slot-build
+kernel-main16-q4nx-chunk-slot-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_chunk_slot.py --build-only
+
+.PHONY: kernel-main16-q4nx-slot-window-run
+kernel-main16-q4nx-slot-window-run:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_slot_window.py
+
+.PHONY: kernel-main16-q4nx-slot-window-build
+kernel-main16-q4nx-slot-window-build:
+	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_slot_window.py --build-only
+
+.PHONY: kernel-main16-q4nx-slot-scheduler-run
+kernel-main16-q4nx-slot-scheduler-run:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_kernels_chunk_slot.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode q
+
+.PHONY: kernel-main16-q4nx-slot-scheduler-build
+kernel-main16-q4nx-slot-scheduler-build:
+	QWEN3_MAIN16_KERNEL_SOURCE=qwen3_decode_kernels_chunk_slot.cc ${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx.py --mode q --build-only
+
 .PHONY: kernel-main16-q4nx-steady-cell-run
 kernel-main16-q4nx-steady-cell-run:
 	${TORCH2AIE_PYTHON} ${srcdir}/run_kernel_main16_q4nx_steady_cell.py
@@ -341,6 +365,132 @@ main16-q4nx-steady-combo-probe:
 	  strings build/native-probe/main16_q4nx_steady_combo_$${name}_probe.o.lst | \
 	    grep -Ein "main16_q4nx_steady_combo|VUPS\\.4x|VLDB\\.UNPACK|VUNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -140; \
 	done
+
+MAIN16_CHUNK_SLOT_EXTRA_DEFS ?=
+
+.PHONY: main16-q4nx-chunk-slot-probe
+main16-q4nx-chunk-slot-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  ${MAIN16_CHUNK_SLOT_EXTRA_DEFS} \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_chunk_slot_probe.cc \
+	  -o build/native-probe/main16_q4nx_chunk_slot_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD VSUB.F VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_chunk_slot_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_chunk_slot_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_chunk_slot_probe.o.lst | \
+	  grep -Ein "main16_q4nx_chunk_slot|VUPS\\.4x|VLDB\\.UNPACK|VUNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD|VSUB\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -220
+
+MAIN16_SLOT_WINDOW_LIMITS ?= 2
+MAIN16_SLOT_WINDOW_EXTRA_DEFS ?=
+
+.PHONY: main16-q4nx-slot-window-probe
+main16-q4nx-slot-window-probe:
+	mkdir -p build/native-probe
+	@for limit in ${MAIN16_SLOT_WINDOW_LIMITS}; do \
+	  ${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	    -DMAIN16_SLOT_WINDOW_PAIR_LIMIT=$$limit \
+	    ${MAIN16_SLOT_WINDOW_EXTRA_DEFS} \
+	    -I${srcdir} \
+	    -I${AIETOOLS_DIR}/include \
+	    -I${MLIR_AIE_DIR}/include \
+	    -I${MLIR_AIE_DIR}/include/aie_kernels \
+	    -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	    -c ${srcdir}/probes/main16_q4nx_slot_window_probe.cc \
+	    -o build/native-probe/main16_q4nx_slot_window_$${limit}_probe.o; \
+	  echo "== pair_limit=$$limit =="; \
+	  for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD VSUB.F VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	    printf '%-18s ' "$$op"; \
+	    strings build/native-probe/main16_q4nx_slot_window_$${limit}_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	  done; \
+	  printf '%-18s ' "[sp] refs"; \
+	    strings build/native-probe/main16_q4nx_slot_window_$${limit}_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l; \
+	  strings build/native-probe/main16_q4nx_slot_window_$${limit}_probe.o.lst | \
+	    grep -Ein "main16_q4nx_slot_window|VUPS\\.4x|VLDB\\.UNPACK|VUNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD|VSUB\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -180; \
+	done
+
+MAIN16_SLOT_WINDOW_SEP_LIMIT ?= 4
+MAIN16_SLOT_WINDOW_SEP_TIMEOUT ?= 180
+MAIN16_SLOT_WINDOW_SEP_VARIANTS ?= "none 0 0" "hard 1 0" "m1 2 -1" "m2 2 -2" "m4 2 -4"
+
+.PHONY: main16-q4nx-slot-window-sep-offset-probe
+main16-q4nx-slot-window-sep-offset-probe:
+	mkdir -p build/native-probe
+	@for spec in ${MAIN16_SLOT_WINDOW_SEP_VARIANTS}; do \
+	  set -- $$spec; name=$$1; kind=$$2; offset=$$3; \
+	  obj=build/native-probe/main16_q4nx_slot_window_sep_${MAIN16_SLOT_WINDOW_SEP_LIMIT}_$${name}_probe.o; \
+	  echo "== pair_limit=${MAIN16_SLOT_WINDOW_SEP_LIMIT} separator=$${name} kind=$${kind} offset=$${offset} =="; \
+	  if ! timeout ${MAIN16_SLOT_WINDOW_SEP_TIMEOUT} ${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	    -DMAIN16_SLOT_WINDOW_PAIR_LIMIT=${MAIN16_SLOT_WINDOW_SEP_LIMIT} \
+	    -DMAIN16_SLOT_WINDOW_SEPARATOR_KIND=$${kind} \
+	    -DMAIN16_SLOT_WINDOW_SEPARATOR_OFFSET=$${offset} \
+	    -I${srcdir} \
+	    -I${AIETOOLS_DIR}/include \
+	    -I${MLIR_AIE_DIR}/include \
+	    -I${MLIR_AIE_DIR}/include/aie_kernels \
+	    -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	    -c ${srcdir}/probes/main16_q4nx_slot_window_sep_offset_probe.cc \
+	    -o $$obj; then \
+	    echo "compile_failed_or_timeout"; \
+	    continue; \
+	  fi; \
+	  for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD VSUB.F VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	    printf '%-18s ' "$$op"; \
+	    strings $$obj.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	  done; \
+	  printf '%-18s ' "[sp] refs"; \
+	    strings $$obj.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l; \
+	done
+
+.PHONY: main16-q4nx-slot-window-loop-probe
+main16-q4nx-slot-window-loop-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -DMAIN16_SLOT_WINDOW_RUNTIME_LOOP=1 \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_slot_window_probe.cc \
+	  -o build/native-probe/main16_q4nx_slot_window_loop_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD VSUB.F VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_slot_window_loop_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_slot_window_loop_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_slot_window_loop_probe.o.lst | \
+	  grep -Ein "main16_q4nx_slot_window|VUPS\\.4x|VLDB\\.UNPACK|VUNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD|VSUB\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -220
+
+.PHONY: main16-q4nx-slot-window-peeled-probe
+main16-q4nx-slot-window-peeled-probe:
+	mkdir -p build/native-probe
+	${TORCH2AIE_TOOLCHAIN}/bin/xchesscc_wrapper aie2p \
+	  -DMAIN16_SLOT_WINDOW_PEELED_LOOP=1 \
+	  -I${srcdir} \
+	  -I${AIETOOLS_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels \
+	  -I${MLIR_AIE_DIR}/include/aie_kernels/aie2p \
+	  -c ${srcdir}/probes/main16_q4nx_slot_window_probe.cc \
+	  -o build/native-probe/main16_q4nx_slot_window_peeled_probe.o
+	@for op in VUPS.4X VLDB.UNPACK VUNPACK VEXTBCST.16 VMAC.F VADDMAC.F VCONV.BF16.FP32 VADD VSUB.F VADD.F VMUL.F VMOV VLDA VLDB VST ST.S8 ST.S16 NOPX NOPA NOPB NOPS NOPM NOPV; do \
+	  printf '%-18s ' "$$op"; \
+	  strings build/native-probe/main16_q4nx_slot_window_peeled_probe.o.lst | grep -Eoi "(^|[^A-Z0-9_.])$$op([^A-Z0-9_.]|$$)" | wc -l; \
+	done
+	@printf '%-18s ' "[sp] refs"; \
+	  strings build/native-probe/main16_q4nx_slot_window_peeled_probe.o.lst | grep -E "\\[sp|VST.*\\[sp|VLDA.*\\[sp|VLDB.*\\[sp|ST\\..*\\[sp" | wc -l
+	@strings build/native-probe/main16_q4nx_slot_window_peeled_probe.o.lst | \
+	  grep -Ein "main16_q4nx_slot_window|VUPS\\.4x|VLDB\\.UNPACK|VUNPACK|VEXTBCST\\.16|VMAC\\.f|VADDMAC\\.f|VCONV\\.bf16\\.fp32|VADD|VSUB\\.f|VMUL\\.f|VMOV|VST|ST\\.|\\[sp|NOP" | head -240
 
 .PHONY: main16-q4nx-steady-section-probe
 main16-q4nx-steady-section-probe:

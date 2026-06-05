@@ -215,6 +215,34 @@ experiment diary.
   slowed Q-only isolated latency to about `1136 us` versus the current
   `~1078 us` baseline. Keep it as a reference shape, not the default production
   implementation.
+- For Main16 slot-window work, do not treat `aie::pipelined_loop` as a magic
+  fix if the loop-carried state is still wide. A production-layout probe with
+  full `RawVec carry_coeff + RawVec carry_act` in a peeled loop compiled but
+  spilled heavily (`VST=10`, `[sp] refs=42`). The issue is the width/lifetime of
+  the carried cells, not the syntax of the loop.
+- The current production-layout slot-window boundary is:
+  `MAIN16_SLOT_WINDOW_PAIR_LIMIT=2` compiles cleanly (`VST=0`, `[sp]=0`) and the
+  NPU strict gate `kernel-main16-q4nx-slot-window-run` passes for group0 dims
+  0..3. `pair_limit=4/8` need `chess_separator_scheduler()` between pair
+  windows to stay clean; `pair_limit=16` with separators still spills
+  (`VST=15`, `[sp] refs=68`). Use small 2-pair windows or at most separated
+  4/8-pair sections as building blocks; do not form a full-group DAG.
+- In the production-adjacent chunk-slot body, fixed-lane quad unrolling has a
+  very small useful window. `MAIN16_CHUNK_SLOT_UNROLL_QUADS=1` compiles cleanly
+  (`VST=0`, `[sp]=0`) but the real Q-mode scheduler regressed to `1530.2 us`
+  from the previous `~1511 us`; `UNROLL_QUADS=2` already spills (`VST=4`,
+  `[sp] refs=10`). Keep the default at zero unless a new body also improves the
+  NPU gate, not just the native report.
+- `chess_separator_scheduler()` is useful here only as a live-range fence for
+  adjacent slot windows. It trades away scheduling freedom and increases NOPs
+  (`pair_limit=8` separator window was clean but had high NOPX), so it should be
+  a measured boundary tool, not a default performance pragma.
+- Prefer the offset form for local Main16 fences when it remains clean.
+  `chess_separator_scheduler(-4)` improved the isolated slot-window reports:
+  `pair_limit=4` hard separator `NOPX=57` -> `-4 NOPX=51`, and `pair_limit=8`
+  hard separator `NOPX=135` -> `-4 NOPX=122`, all with `VST=0` and `[sp]=0`.
+  It does not fix an oversized full-group DAG: `pair_limit=16` stayed spilled
+  (`VST=15`, `[sp] refs=68`) although NOPX fell from `278` to `249`.
 - MyLM's cross-group Q4NX pipeline is a cell-level state machine, not a
   C++-level `Vec64 q_current` or group helper pipeline. Reverse artifacts show
   steady-to-steady boundaries with 27 data cells and 12 pointer/scalar cells,

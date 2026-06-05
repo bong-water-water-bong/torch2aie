@@ -34,6 +34,12 @@ ROLE_KERNEL_SOURCES = {
     "main16_q4nx_section_cell_probe.o": (
         "probes/main16_q4nx_section_cell_probe.cc",
     ),
+    "main16_q4nx_chunk_slot_probe.o": (
+        "probes/main16_q4nx_chunk_slot_probe.cc",
+    ),
+    "main16_q4nx_slot_window_probe.o": (
+        "probes/main16_q4nx_slot_window_probe.cc",
+    ),
     "main16_q4nx_steady_cell_probe.o": (
         "probes/main16_q4nx_steady_cell_probe.cc",
     ),
