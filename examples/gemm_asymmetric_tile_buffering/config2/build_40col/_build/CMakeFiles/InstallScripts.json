@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/bcloud/torch2aie/examples/gemm_asymmetric_tile_buffering/config2/build_40col/_build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

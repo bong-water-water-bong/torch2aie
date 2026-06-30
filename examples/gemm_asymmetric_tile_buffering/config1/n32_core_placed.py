@@ -329,10 +329,13 @@ def my_matmul(M, K, N, m, k, n):
                     dma_free_task(*input_task_groups[1])
                     input_task_groups[1] = []
 
-            dma_await_task(*output_task_groups[2])
-            dma_free_task(*input_task_groups[2])
-            dma_await_task(*output_task_groups[3])
-            dma_free_task(*input_task_groups[3])
+            # Only drain groups that were actually used
+            if output_task_groups[2]:
+                dma_await_task(*output_task_groups[2])
+                dma_free_task(*input_task_groups[2])
+            if output_task_groups[3]:
+                dma_await_task(*output_task_groups[3])
+                dma_free_task(*input_task_groups[3])
 
             if enable_tracing:
                 trace_utils.gen_trace_done_aie2(shim_tile_trace)

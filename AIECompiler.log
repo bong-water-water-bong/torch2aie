@@ -1,0 +1,8 @@
+                                           AI Engine Compiler
+                                     Version 2026.1 (linux64-bit)
+                                     SW Build ab5caf8 (release_rai_1_7) on 2026-03-19-11:16:52
+                          Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+                          Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+ERROR: [aiecompiler 77-23438] Unrecognized Option name compile
+Compilation Failed
+(WARNING:0, CRITICAL-WARNING:0, ERROR:1)

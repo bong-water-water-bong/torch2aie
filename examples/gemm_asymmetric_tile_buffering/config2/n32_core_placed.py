@@ -287,14 +287,16 @@ def my_matmul(M, K, N, m, k, n):
                     dma_start_task(c_task)
                     output_task_groups[group_idx % tb_max_n_rows].append(c_task)
                 if (group_idx % tb_max_n_rows == 1) and (group_idx != 1):
-                    dma_await_task(*output_task_groups[2])
-                    output_task_groups[2] = []
-                    dma_free_task(*input_task_groups[2])
-                    input_task_groups[2] = []
-                    dma_await_task(*output_task_groups[3])
-                    output_task_groups[3] = []
-                    dma_free_task(*input_task_groups[3])
-                    input_task_groups[3] = []
+                    if len(output_task_groups[2]) > 0:
+                        dma_await_task(*output_task_groups[2])
+                        output_task_groups[2] = []
+                        dma_free_task(*input_task_groups[2])
+                        input_task_groups[2] = []
+                    if len(output_task_groups[3]) > 0:
+                        dma_await_task(*output_task_groups[3])
+                        output_task_groups[3] = []
+                        dma_free_task(*input_task_groups[3])
+                        input_task_groups[3] = []
                 if group_idx % tb_max_n_rows == 3:
                     dma_await_task(*output_task_groups[0])
                     output_task_groups[0] = []
@@ -305,10 +307,13 @@ def my_matmul(M, K, N, m, k, n):
                     dma_free_task(*input_task_groups[1])
                     input_task_groups[1] = []
 
-            dma_await_task(*output_task_groups[2])
-            dma_free_task(*input_task_groups[2])
-            dma_await_task(*output_task_groups[3])
-            dma_free_task(*input_task_groups[3])
+            for output_i in range(tb_max_n_rows):
+                if len(output_task_groups[output_i]) > 0:
+                    dma_await_task(*output_task_groups[output_i])
+                    if len(input_task_groups[output_i]) > 0:
+                        dma_free_task(*input_task_groups[output_i])
+                    output_task_groups[output_i] = []
+                    input_task_groups[output_i] = []
 
             if enable_tracing:
                 trace_utils.gen_trace_done_aie2(shim_tile_trace)

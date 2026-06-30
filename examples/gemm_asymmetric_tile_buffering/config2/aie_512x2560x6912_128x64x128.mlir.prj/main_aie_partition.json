@@ -1,0 +1,31 @@
+{
+  "aie_partition": {
+    "PDIs": [
+      {
+        "cdo_groups": [
+          {
+            "dpu_kernel_ids": [
+              "0x901"
+            ],
+            "name": "DPU",
+            "pdi_id": "0x01",
+            "pre_cdo_groups": [
+              "0xC1"
+            ],
+            "type": "PRIMARY"
+          }
+        ],
+        "file_name": "/home/bcloud/torch2aie/examples/gemm_asymmetric_tile_buffering/config2/aie_512x2560x6912_128x64x128.mlir.prj/main.pdi",
+        "uuid": "7c2a0456-7c1a-4a4f-87e7-285b85147c13"
+      }
+    ],
+    "inference_fingerprint": "23423",
+    "name": "QoS",
+    "operations_per_cycle": "2048",
+    "partition": {
+      "column_width": 50,
+      "start_columns": []
+    },
+    "pre_post_fingerprint": "12345"
+  }
+}
