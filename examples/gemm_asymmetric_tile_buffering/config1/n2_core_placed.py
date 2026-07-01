@@ -236,7 +236,7 @@ def my_matmul(M, K, N, m, k, n):
                                 elem_in_b = B_l2l1_fifos[col].acquire(
                                     ObjectFifoPort.Consume, 1
                                 )
-                                for i in range(n_aie_rows):
+                                for i in range(4):
                                     elem_in_a = A_l2l1_fifos[row].acquire(
                                         ObjectFifoPort.Consume, 1
                                     )
@@ -329,13 +329,11 @@ def my_matmul(M, K, N, m, k, n):
                     dma_free_task(*input_task_groups[1])
                     input_task_groups[1] = []
 
-            # Only drain groups that were actually used
-            if output_task_groups[2]:
-                dma_await_task(*output_task_groups[2])
-                dma_free_task(*input_task_groups[2])
-            if output_task_groups[3]:
-                dma_await_task(*output_task_groups[3])
-                dma_free_task(*input_task_groups[3])
+            # Drain all remaining task groups
+            for g in [0, 1, 2, 3]:
+                if output_task_groups[g]:
+                    dma_await_task(*output_task_groups[g])
+                    dma_free_task(*input_task_groups[g])
 
             if enable_tracing:
                 trace_utils.gen_trace_done_aie2(shim_tile_trace)
