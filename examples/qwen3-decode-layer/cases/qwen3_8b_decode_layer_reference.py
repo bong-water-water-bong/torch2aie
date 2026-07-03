@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 from ml_dtypes import bfloat16
 
-from contract import HEAD_DIM, HIDDEN_DIM, INTERMEDIATE_DIM, NUM_KV_HEADS, NUM_Q_HEADS
+from contract import ATTENTION_BF16, HEAD_DIM, HIDDEN_DIM, INTERMEDIATE_DIM, NUM_KV_HEADS, NUM_Q_HEADS
 from q4nx_reference import q4nx_matvec_from_chunks
 from qwen3_model import ProjectionTensor, Qwen3Q4NXModel, layer_projection_tensors
 
@@ -313,7 +313,7 @@ class Qwen3LayerReference:
         k_cache[inputs.current_token, :, :] = k.reshape(NUM_KV_HEADS, HEAD_DIM)
         v_cache[inputs.current_token, :, :] = v.reshape(NUM_KV_HEADS, HEAD_DIM)
 
-        attention = _attention(q, k_cache, v_cache, inputs.current_token)
+        attention = attention_bf16_npu(q, k_cache, v_cache, inputs.current_token)
         o = self.project(O_PROJECTION, attention)
         post_attention = (inputs.hidden.astype(np.float32) + o.astype(np.float32)).astype(bfloat16)
         ffn_input = _rms_norm(
@@ -395,7 +395,7 @@ def _attention(
         weights = np.exp(shifted)
         weights /= np.sum(weights)
         output[q_head, :] = np.einsum("t,td->d", weights, v_values[:, kv_head, :]).astype(bfloat16)
-    return output.reshape(HIDDEN_DIM).astype(bfloat16)
+    return output.reshape(ATTENTION_BF16).astype(bfloat16)
 
 
 def _floor_i32(value: np.float32) -> int:
@@ -523,7 +523,7 @@ def attention_bf16_npu(
                     np.float32(accum[q_head, dim] / state_sum[q_head]),
                     dtype=bfloat16,
                 )
-    return output.reshape(HIDDEN_DIM).astype(bfloat16)
+    return output.reshape(ATTENTION_BF16).astype(bfloat16)
 
 
 def validate_model_assets(model: Qwen3Q4NXModel, layer: int) -> list[str]:

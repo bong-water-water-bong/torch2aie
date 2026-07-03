@@ -6,7 +6,7 @@ namespace {
 constexpr int32_t kRmsVecLanes = 32;
 constexpr int32_t kCopyVecDwords = 16;
 constexpr int32_t kRecordPayloadDwords = 256;
-constexpr int32_t kQRecords = 8;
+constexpr int32_t kQRecords = 4;
 constexpr int32_t kKvRecords = 2;
 
 __attribute__((always_inline)) static inline void copy_record_payload(
@@ -243,7 +243,7 @@ void qwen3_postprocess_q4nx_body_payload(
     int32_t q_dwords,
     int32_t current_dwords
 ) {
-    constexpr int32_t q_heads = 32;
+    constexpr int32_t q_heads = 16;
     constexpr int32_t head_dim = 128;
     bfloat16 *q_values = reinterpret_cast<bfloat16 *>(q_body);
     bfloat16 *q_output = reinterpret_cast<bfloat16 *>(q_payload);

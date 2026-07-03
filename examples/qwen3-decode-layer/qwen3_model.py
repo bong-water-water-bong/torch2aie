@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,9 +21,16 @@ from contract import (
 )
 from q4nx_reference import CHUNK_BYTES
 
-DEFAULT_QWEN3_8B_MODEL_PATH = Path("/var/home/taowen/flm/models/Qwen3-8B-NPU2")
+DEFAULT_QWEN3_MODEL_PATH = Path(
+    os.environ.get("QWEN3_MODEL_PATH", "~/.config/flm/models/Qwen3-0.6B-NPU2")
+).expanduser()
+DEFAULT_QWEN3_8B_MODEL_PATH = DEFAULT_QWEN3_MODEL_PATH
 MODEL_FILES = ("config.json", "model.q4nx", "tokenizer.json", "tokenizer_config.json")
-QWEN3_8B_BASE_URL = "https://huggingface.co/FastFlowLM/Qwen3-8B-NPU2/resolve/v0.9.22-faster-q4-1"
+QWEN3_BASE_URL = os.environ.get(
+    "QWEN3_BASE_URL",
+    "https://huggingface.co/FastFlowLM/Qwen3-0.6B-NPU2/resolve/v0.9.22-faster-q4-1",
+)
+QWEN3_8B_BASE_URL = QWEN3_BASE_URL
 
 
 @dataclass(frozen=True)
@@ -82,8 +90,8 @@ QKV_BODY_PHASES = ("Q", "K", "V")
 
 def model_file_url(filename: str) -> str:
     if filename not in MODEL_FILES:
-        raise ValueError(f"unknown Qwen3-8B model file: {filename}")
-    return f"{QWEN3_8B_BASE_URL}/{filename}?download=true"
+        raise ValueError(f"unknown Qwen3 model file: {filename}")
+    return f"{QWEN3_BASE_URL}/{filename}?download=true"
 
 
 def missing_model_files(model_path: Path) -> tuple[Path, ...]:
@@ -115,7 +123,7 @@ def _require_qwen3_8b_config(config: Qwen3Config) -> None:
         num_attention_heads=NUM_Q_HEADS,
         num_key_value_heads=NUM_KV_HEADS,
         head_dim=HEAD_DIM,
-        num_hidden_layers=36,
+        num_hidden_layers=28,
         rms_norm_eps=1.0e-6,
         rope_theta=1_000_000.0,
     )
@@ -135,7 +143,7 @@ def _require_qwen3_8b_config(config: Qwen3Config) -> None:
     if config.num_hidden_layers != expected.num_hidden_layers:
         mismatches.append(f"num_hidden_layers={config.num_hidden_layers}")
     if mismatches:
-        raise ValueError("model is not Qwen3-8B-NPU2: " + ", ".join(mismatches))
+        raise ValueError("model does not match the active Qwen3 decode contract: " + ", ".join(mismatches))
 
 
 def _load_q4nx_header(q4nx_path: Path) -> tuple[int, dict[str, TensorMeta]]:
@@ -178,7 +186,7 @@ class Qwen3Q4NXModel:
         missing = missing_model_files(model_path)
         if missing:
             formatted = ", ".join(str(path) for path in missing)
-            raise FileNotFoundError(f"missing Qwen3-8B model files: {formatted}")
+            raise FileNotFoundError(f"missing Qwen3 model files: {formatted}")
         self.config = _read_config(model_path)
         _require_qwen3_8b_config(self.config)
         self.q4nx_path = model_path / "model.q4nx"

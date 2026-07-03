@@ -1,4 +1,4 @@
-"""Download the MyLM Qwen3-8B Q4NX model assets."""
+"""Download the MyLM Qwen3 Q4NX model assets."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def ensure_qwen3_8b_model(model_path: Path = DEFAULT_QWEN3_8B_MODEL_PATH, downlo
     if not download:
         formatted = "\n".join(f"  {path}" for path in missing)
         raise FileNotFoundError(
-            "Qwen3-8B-NPU2 model files are missing. "
+            "Qwen3 model files are missing. "
             "Run with --download-model to fetch them:\n"
             f"{formatted}"
         )
