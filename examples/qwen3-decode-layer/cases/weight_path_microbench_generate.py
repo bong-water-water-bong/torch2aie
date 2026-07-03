@@ -30,7 +30,7 @@ from weight_stream import (
     weight_stream_row_streams,
 )
 
-CASE_NAME = "qwen3-8b-weight-path"
+CASE_NAME = "qwen3-weight-path"
 MAIN16_KERNEL_OBJECT = "main_projection_q4nx_fast.o"
 MAIN16_WEIGHT_CONSUMER = "q4nx_main16_weight_stream_consume"
 MAIN16_PHASE_LIMIT_FULL = 7

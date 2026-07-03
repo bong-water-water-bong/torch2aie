@@ -21,7 +21,7 @@ from cases.full_layer_engine_reference import aux_as_i32, packed_as_i32
 from qwen3_model import DEFAULT_QWEN3_8B_MODEL_PATH, Qwen3Q4NXModel
 
 EXPERIMENT_DIR = Path(__file__).parent
-BUILD_NAME = "qwen3-8b-weight-compact"
+BUILD_NAME = "qwen3-weight-compact"
 
 
 def _model_path(model_path: Path | None) -> Path:
@@ -91,7 +91,7 @@ def run(
     errors = full_runner.validate_model_assets(model, layer)
     if errors:
         for error in errors:
-            print(f"  QWEN3-8B ASSET FAIL: {error}")
+            print(f"  QWEN3 ASSET FAIL: {error}")
         return False
 
     print("=" * 78)

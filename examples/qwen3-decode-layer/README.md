@@ -53,7 +53,7 @@ for current-K writeback.  Do not split the compact ABI back into packet10..15.
 - `postprocess_qkv.cc` and `full_vector_station.cc`: Chess C++ edge role
   kernels used by the QKV-prefix path.
 - `run_qkv_prefix.py`: build/check/run wrapper for the real NPU path.
-- `run_full_layer.py`: build/check/run wrapper for the real Qwen3-8B layer
+- `run_full_layer.py`: build/check/run wrapper for the real Qwen3 layer
   frontier.
 - `run_weight_stream.py`: full-graph weight-stream consume/drop timing wrapper.
 - `*_light.cc`: full-graph weight-stream probe role kernels that keep the

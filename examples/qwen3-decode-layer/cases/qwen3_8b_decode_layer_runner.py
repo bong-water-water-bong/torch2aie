@@ -1,4 +1,4 @@
-"""Runner for the real Qwen3-8B single-layer numerical target."""
+"""Runner for the real Qwen3 single-layer numerical target."""
 
 from __future__ import annotations
 
@@ -239,7 +239,7 @@ def check_only(
         )
     if errors:
         for error in errors:
-            print(f"  QWEN3-8B FULL-LAYER FAIL: {error}")
+            print(f"  QWEN3 FULL-LAYER FAIL: {error}")
         return False
     weight_bytes, hidden_dwords, aux_dwords = _validate_real_physical_inputs(model, layer, target_schedule)
     print(f"  PASS: {CASE_NAME} assets valid for layer {layer}")
@@ -265,7 +265,7 @@ def build_only(
     errors = validate_model_assets(model, layer)
     if errors:
         for error in errors:
-            print(f"  QWEN3-8B ASSET FAIL: {error}")
+            print(f"  QWEN3 ASSET FAIL: {error}")
         return False
     _validate_real_physical_inputs(model, layer, target_schedule)
     xclbin_path, insts_path = build_kernel(build_schedule, _capacity_build_name(build_schedule))
@@ -291,7 +291,7 @@ def build_weight_stream_microbench(
     errors = validate_model_assets(model, layer)
     if errors:
         for error in errors:
-            print(f"  QWEN3-8B ASSET FAIL: {error}")
+            print(f"  QWEN3 ASSET FAIL: {error}")
         return False
     _validate_real_physical_inputs(model, layer, target_schedule)
     xclbin_path, insts_path = build_kernel(build_schedule, _weight_stream_build_name(build_schedule))
@@ -319,7 +319,7 @@ def run_weight_stream_microbench(
     errors = validate_model_assets(model, layer)
     if errors:
         for error in errors:
-            print(f"  QWEN3-8B ASSET FAIL: {error}")
+            print(f"  QWEN3 ASSET FAIL: {error}")
         return False
 
     print("=" * 78)
@@ -390,7 +390,7 @@ def run(
     errors = validate_model_assets(model, layer)
     if errors:
         for error in errors:
-            print(f"  QWEN3-8B ASSET FAIL: {error}")
+            print(f"  QWEN3 ASSET FAIL: {error}")
         return False
 
     print("=" * 78)

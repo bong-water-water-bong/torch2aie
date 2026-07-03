@@ -12,7 +12,7 @@ XRT_DIR ?= ${TORCH2AIE_TOOLCHAIN}/xrt
 
 CURRENT_TOKEN ?= 31
 LAYER ?= 0
-MODEL_PATH ?= /var/home/taowen/flm/models/Qwen3-8B-NPU2
+MODEL_PATH ?= ${HOME}/.config/flm/models/Qwen3-0.6B-NPU2
 
 export PYTHONNOUSERSITE := 1
 export PYTHONPATH := ${srcdir}:${XRT_DIR}/python:${MLIR_AIE_DIR}/python:${MLIR_AIE_DIR}/src/python${PYTHONPATH:+:${PYTHONPATH}}

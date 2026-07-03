@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-"""Command-line runner for the real Qwen3-8B full-layer frontier."""
+"""Command-line runner for the real Qwen3 full-layer frontier."""
 
 from __future__ import annotations
 

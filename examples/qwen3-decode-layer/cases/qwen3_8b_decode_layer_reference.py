@@ -1,4 +1,4 @@
-"""Numerical Qwen3-8B single-layer reference over MyLM Q4NX weights."""
+"""Numerical Qwen3 single-layer reference over MyLM Q4NX weights."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from contract import ATTENTION_BF16, HEAD_DIM, HIDDEN_DIM, INTERMEDIATE_DIM, NUM
 from q4nx_reference import q4nx_matvec_from_chunks
 from qwen3_model import ProjectionTensor, Qwen3Q4NXModel, layer_projection_tensors
 
-CASE_NAME = "qwen3-8b-decode-layer"
+CASE_NAME = "qwen3-decode-layer"
 DEFAULT_LAYER = 0
 DEFAULT_CURRENT_TOKEN = 31
 Q_PROJECTION = "Q"

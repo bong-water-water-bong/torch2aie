@@ -36,7 +36,7 @@ from mlir_utils import flow, npu_address_patch, npu_push_queue, npu_sync, npu_wr
 from projection_schedule import QKV_BODY_WEIGHT_CHUNKS
 from qkv_compact_reference import FFN_GLOBAL_PACKET_ID, O_GLOBAL_PACKET_ID, Q_GLOBAL_PACKET_ID
 
-CASE_NAME = "qwen3-8b-weight-compact"
+CASE_NAME = "qwen3-weight-compact"
 MAIN16_KERNEL_OBJECT = "main_projection_q4nx_fast.o"
 MAIN16_WEIGHT_COMPACT_CONSUMER = "q4nx_main16_weight_compact_consume"
 WEIGHT_PATCH_BD_IDS = (

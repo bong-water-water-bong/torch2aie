@@ -197,7 +197,7 @@ def run(
     errors = validate_model_assets(model, layer)
     if errors:
         for error in errors:
-            print(f"  QWEN3-8B ASSET FAIL: {error}")
+            print(f"  QWEN3 ASSET FAIL: {error}")
         return False
 
     print("=" * 78)
