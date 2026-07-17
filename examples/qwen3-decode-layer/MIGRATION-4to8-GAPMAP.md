@@ -92,6 +92,18 @@ need to become `8`. Resolve with the migrator's intent; do not guess.
    (full NPU run with real weights) and confirm fault-free + coherent output.
 5. Then T14 (C++ engine driving this kernel) becomes possible.
 
+
+### C3. Column-tile BD uniqueness (pre-existing bug, blocks aiecc)
+
+Source:  for NPU2 memtiles (read via headless browser):
+
+Each memtile has 48 BDs (0-47), banked as 0-23 (even) / 24-47 (odd).
+
+The  pass uses ONE  per tile, walking ALL DMABDOps on that tile. If two DMA blocks on the same tile specify the same bd_id -> assertion .
+
+The generator assigns BDs per-channel independently -> same bd_id on different channels of the same tile -> duplication -> blocks aiecc.
+
+**Fix:** ensure UNIQUE bd_ids per tile across ALL DMA channels in the generator. My C1 hub fix (BDs 37/34/35/36) is CORRECT per this spec.
 ## Safety — read before "just make it build"
 
 The validators in sections C/D exist **precisely** to prevent the DMA/IOMMU
