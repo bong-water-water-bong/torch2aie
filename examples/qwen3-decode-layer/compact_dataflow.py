@@ -87,9 +87,9 @@ HUB_Q_IN_CHANNEL = 1
 HUB_Q_IN_BD = 24
 # 8 columns: reuse DM channels 1-4 for Q outputs, 2nd half on same channels
 HUB_Q_OUT_CHANNELS = (1, 2, 3, 4, 1, 2, 3, 4)
-HUB_Q_OUT_BDS = (25, 2, 26, 3, 37, 5, 34, 8)  # C1: odd ch 1/3 (idx 4/6) moved 1->37, 7->34 (>23 bank; 24 collides)
+HUB_Q_OUT_BDS = (25, 2, 26, 3, 37, 5, 36, 8)  # C1: odd ch 1/3 (idx 4/6) moved 1->37, 7->36 (avoid attn_out range 34-35)
 HUB_RETURN_IN_CHANNELS = (2, 3, 4, 5, 2, 3, 4, 5)
-HUB_RETURN_IN_BDS = (4, 28, 6, 30, 9, 35, 11, 36)  # C1: odd ch 3/5 (idx 5/7) moved 10->35, 12->36 (>23 bank)
+HUB_RETURN_IN_BDS = (4, 28, 6, 30, 9, 38, 11, 39)  # C1: odd ch 3/5 (idx 5/7) moved 10->38, 12->39 (avoid attn_out 34-35)
 HUB_FFN_IN_CHANNEL = 0
 HUB_FFN_IN_BD = 0
 HUB_ATTENTION_OUT_BDS = tuple(range(34, 34 + O_BODY_RECORDS))

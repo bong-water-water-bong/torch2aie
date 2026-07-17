@@ -1563,9 +1563,9 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
     if (
         HUB_Q_IN_CHANNEL != 1
         or HUB_Q_OUT_CHANNELS != (1, 2, 3, 4, 1, 2, 3, 4)
-        or HUB_Q_OUT_BDS != (25, 2, 26, 3, 37, 5, 34, 8)  # 8-col; C1 remapped idx4/6 to 37/34 (odd ch -> BD>23)
+        or HUB_Q_OUT_BDS != (25, 2, 26, 3, 37, 5, 36, 8)  # 8-col; C1 remapped idx4/6 to 37/36 (avoid attn_out 34-35)
         or HUB_RETURN_IN_CHANNELS != (2, 3, 4, 5, 2, 3, 4, 5)
-        or HUB_RETURN_IN_BDS != (4, 28, 6, 30, 9, 35, 11, 36)  # 8-col; C1 remapped idx5/7 to 35/36 (odd ch -> BD>23)
+        or HUB_RETURN_IN_BDS != (4, 28, 6, 30, 9, 38, 11, 39)  # 8-col; C1 remapped idx5/7 to 38/39 (avoid attn_out 34-35)
         or HUB_DOWN_OUT_BDS != (27, 29, 31, 32, 33, 42, 43, 44)
     ):
         errors.append("hub BD contract mismatch")
