@@ -1,4 +1,4 @@
-"""Shared compact-record and row1 weight-stream dataflow for qwen3-layer."""
+"""Shared compact-record and row1 weight-stream dataflow for qwen3-layer — 8-col hub."""
 
 from __future__ import annotations
 
@@ -85,14 +85,18 @@ BRIDGE_COMPACT_OUT_CHANNEL = 0
 
 HUB_Q_IN_CHANNEL = 1
 HUB_Q_IN_BD = 24
-HUB_Q_OUT_CHANNELS = (1, 2, 3, 4)
-HUB_Q_OUT_BDS = (25, 2, 26, 3)
-HUB_RETURN_IN_CHANNELS = (2, 3, 4, 5)
-HUB_RETURN_IN_BDS = (4, 28, 6, 30)
+# 8 columns: reuse DM channels 1-4 for Q outputs, 2nd half on same channels
+HUB_Q_OUT_CHANNELS = (1, 2, 3, 4, 1, 2, 3, 4)
+HUB_Q_OUT_BDS = (25, 2, 26, 3, 37, 5, 34, 8)  # C1: odd ch 1/3 (idx 4/6) moved 1->37, 7->34 (>23 bank; 24 collides)
+HUB_RETURN_IN_CHANNELS = (2, 3, 4, 5, 2, 3, 4, 5)
+HUB_RETURN_IN_BDS = (4, 28, 6, 30, 9, 35, 11, 36)  # C1: odd ch 3/5 (idx 5/7) moved 10->35, 12->36 (>23 bank)
 HUB_FFN_IN_CHANNEL = 0
 HUB_FFN_IN_BD = 0
 HUB_ATTENTION_OUT_BDS = tuple(range(34, 34 + O_BODY_RECORDS))
 HUB_DOWN_OUT_BDS = (27, 29, 31, 32, 33, 42, 43, 44)
+
+# Number of hub Q-output / return-input windows (8 for 8 KV heads)
+HUB_WINDOWS = 8
 
 
 @dataclass(frozen=True)
@@ -167,7 +171,13 @@ def compact_phase_trace(labels: tuple[str, ...]) -> tuple[CompactPhase, ...]:
 
 
 COMPACT_PHASE_TRACE = compact_phase_trace(BODY_PHASES)
-COMPACT_PIPELINE_LOCKS = ROWS_PER_COLUMN + 1
+# For bridge and column memtile, COMPACT_PIPELINE_LOCKS is shared
+# Column memtile uses stages 0..ROWS_PER_COLUMN-1 for rows, stage ROWS_PER_COLUMN for output
+# Bridge uses stages 0..len(MAIN_COLUMNS)-1 for groups, stage len(MAIN_COLUMNS) for output
+# With 4 main columns and 4 rows: BRIDGE = 5, COLUMN = 5
+BRIDGE_PIPELINE_LOCKS = len(MAIN_COLUMNS) + 1
+COLUMN_PIPELINE_LOCKS = ROWS_PER_COLUMN + 1
+COMPACT_PIPELINE_LOCKS = max(COLUMN_PIPELINE_LOCKS, BRIDGE_PIPELINE_LOCKS)
 WEIGHT_LOCK_BASE = COMPACT_PIPELINE_LOCKS
 
 
@@ -379,7 +389,7 @@ def _bridge_lock_defs() -> str:
         '    %bridge_compact_stage0 = aie.lock(%bridge, 0) '
         '{init = 2 : i32, sym_name = "bridge_compact_stage0"}\n'
     ]
-    for stage in range(1, COMPACT_PIPELINE_LOCKS):
+    for stage in range(1, BRIDGE_PIPELINE_LOCKS):
         lines.append(
             f'    %bridge_compact_stage{stage} = aie.lock(%bridge, {stage}) '
             f'{{init = 0 : i32, sym_name = "bridge_compact_stage{stage}"}}\n'
@@ -462,13 +472,14 @@ def _bridge_receive_starts() -> str:
 
 def _bridge_output_blocks() -> str:
     ping_bd, pong_bd = COMPACT_OUT_BDS
+    bridge_out_stage = len(MAIN_COLUMNS)
     return f"""    ^compact_ping_out:
-      aie.use_lock(%bridge_compact_stage{ROWS_PER_COLUMN}, AcquireGreaterEqual, 1)
+      aie.use_lock(%bridge_compact_stage{bridge_out_stage}, AcquireGreaterEqual, 1)
       aie.dma_bd(%bridge_compact_ping : memref<{COMPACT_PACKET_DWORDS}xi32>, 0, {COMPACT_PACKET_DWORDS}) {{bd_id = {ping_bd} : i32, next_bd_id = {pong_bd} : i32}}
       aie.use_lock(%bridge_compact_stage0, Release, 1)
       aie.next_bd ^compact_pong_out
     ^compact_pong_out:
-      aie.use_lock(%bridge_compact_stage{ROWS_PER_COLUMN}, AcquireGreaterEqual, 1)
+      aie.use_lock(%bridge_compact_stage{bridge_out_stage}, AcquireGreaterEqual, 1)
       aie.dma_bd(%bridge_compact_pong : memref<{COMPACT_PACKET_DWORDS}xi32>, 0, {COMPACT_PACKET_DWORDS}) {{bd_id = {pong_bd} : i32, next_bd_id = {ping_bd} : i32}}
       aie.use_lock(%bridge_compact_stage0, Release, 1)
       aie.next_bd ^compact_ping_out"""
@@ -524,23 +535,23 @@ def _bridge(phase_trace: tuple[CompactPhase, ...]) -> str:
 def _hub() -> str:
     q_outs: list[str] = []
     for window, (channel, bd_id) in enumerate(zip(HUB_Q_OUT_CHANNELS, HUB_Q_OUT_BDS, strict=True)):
-        next_start = f"^q{window + 1}_start" if window + 1 < 4 else "^return0_start"
+        next_start = f"^q{window + 1}_start" if window + 1 < HUB_WINDOWS else "^return0_start"
         q_outs.append(f"""    ^q{window}_start:
       %q{window}_dma = aie.dma_start(MM2S, {channel}, ^q{window}_out, {next_start})
     ^q{window}_out:
       aie.use_lock(%hub_q_full, AcquireGreaterEqual, 1)
-      aie.dma_bd(%hub_q : memref<{Q_DWORDS}xi32>, {window * WINDOW_DWORDS}, {WINDOW_DWORDS}) {{bd_id = {bd_id} : i32}}
+      aie.dma_bd(%hub_q : memref<{Q_DWORDS}xi32>, {window * WINDOW_DWORDS % Q_DWORDS}, {WINDOW_DWORDS}) {{bd_id = {bd_id} : i32}}
       aie.use_lock(%hub_q_empty, Release, 1)
       aie.next_bd ^q{window}_out""")
 
     return_ins: list[str] = []
     for window, (channel, bd_id) in enumerate(zip(HUB_RETURN_IN_CHANNELS, HUB_RETURN_IN_BDS, strict=True)):
-        next_start = f"^return{window + 1}_start" if window + 1 < 4 else "^ffn_in_start"
+        next_start = f"^return{window + 1}_start" if window + 1 < HUB_WINDOWS else "^ffn_in_start"
         return_ins.append(f"""    ^return{window}_start:
       %return{window}_dma = aie.dma_start(S2MM, {channel}, ^return{window}_in, {next_start})
     ^return{window}_in:
       aie.use_lock(%hub_return_empty, AcquireGreaterEqual, 1)
-      aie.dma_bd(%hub_return : memref<{Q_DWORDS}xi32>, {window * WINDOW_DWORDS}, {WINDOW_DWORDS}) {{bd_id = {bd_id} : i32}}
+      aie.dma_bd(%hub_return : memref<{Q_DWORDS}xi32>, {window * WINDOW_DWORDS % Q_DWORDS}, {WINDOW_DWORDS}) {{bd_id = {bd_id} : i32}}
       aie.use_lock(%hub_return_full, Release, 1)
       aie.next_bd ^return{window}_in""")
 
@@ -548,11 +559,11 @@ def _hub() -> str:
     for replay, bd_id in enumerate(HUB_ATTENTION_OUT_BDS):
         next_label = f"^attention_out{replay + 1}" if replay + 1 < O_BODY_RECORDS else "^down_out0"
         if replay == 0:
-            acquire = "      aie.use_lock(%hub_return_full, AcquireGreaterEqual, 4)\n"
+            acquire = f"      aie.use_lock(%hub_return_full, AcquireGreaterEqual, {HUB_WINDOWS})\n"
             release = "      aie.use_lock(%hub_attention_replay, Release, 1)\n"
         elif replay + 1 == O_BODY_RECORDS:
             acquire = "      aie.use_lock(%hub_attention_replay, AcquireGreaterEqual, 1)\n"
-            release = "      aie.use_lock(%hub_return_empty, Release, 4)\n"
+            release = f"      aie.use_lock(%hub_return_empty, Release, {HUB_WINDOWS})\n"
         else:
             acquire = "      aie.use_lock(%hub_attention_replay, AcquireGreaterEqual, 1)\n"
             release = "      aie.use_lock(%hub_attention_replay, Release, 1)\n"
@@ -580,9 +591,9 @@ def _hub() -> str:
     %hub_q = aie.buffer(%hub) {{address = 147456 : i32, sym_name = "hub_q"}} : memref<{Q_DWORDS}xi32>
     %hub_return = aie.buffer(%hub) {{address = 163840 : i32, sym_name = "hub_return"}} : memref<{Q_DWORDS}xi32>
     %hub_ffn = aie.buffer(%hub) {{address = 180224 : i32, sym_name = "hub_ffn"}} : memref<{DOWN_PACKET_DWORDS}xi32>
-    %hub_q_empty = aie.lock(%hub, 0) {{init = 4 : i32, sym_name = "hub_q_empty"}}
+    %hub_q_empty = aie.lock(%hub, 0) {{init = {HUB_WINDOWS} : i32, sym_name = "hub_q_empty"}}
     %hub_q_full = aie.lock(%hub, 1) {{init = 0 : i32, sym_name = "hub_q_full"}}
-    %hub_return_empty = aie.lock(%hub, 2) {{init = 4 : i32, sym_name = "hub_return_empty"}}
+    %hub_return_empty = aie.lock(%hub, 2) {{init = {HUB_WINDOWS} : i32, sym_name = "hub_return_empty"}}
     %hub_return_full = aie.lock(%hub, 3) {{init = 0 : i32, sym_name = "hub_return_full"}}
 {lock_pair("hub", "ffn", 4)}
     %hub_attention_replay = aie.lock(%hub, 6) {{init = 0 : i32, sym_name = "hub_attention_replay"}}
@@ -591,9 +602,9 @@ def _hub() -> str:
     %hub_dma = aie.memtile_dma(%hub) {{
       %q_in_dma = aie.dma_start(S2MM, {HUB_Q_IN_CHANNEL}, ^q_in, ^q0_start)
     ^q_in:
-      aie.use_lock(%hub_q_empty, AcquireGreaterEqual, 4)
+      aie.use_lock(%hub_q_empty, AcquireGreaterEqual, {HUB_WINDOWS})
       aie.dma_bd(%hub_q : memref<{Q_DWORDS}xi32>, 0, {Q_DWORDS}) {{bd_id = {HUB_Q_IN_BD} : i32}}
-      aie.use_lock(%hub_q_full, Release, 4)
+      aie.use_lock(%hub_q_full, Release, {HUB_WINDOWS})
       aie.next_bd ^q_in
 
 {chr(10).join(q_outs)}

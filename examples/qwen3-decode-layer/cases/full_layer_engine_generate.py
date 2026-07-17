@@ -1456,8 +1456,8 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
             "attention_out",
             PACKET_ID_ATTENTION,
             O_BODY_RECORDS,
-            "aie.use_lock(%hub_return_full, AcquireGreaterEqual, 4)",
-            "aie.use_lock(%hub_return_empty, Release, 4)",
+            "aie.use_lock(%hub_return_full, AcquireGreaterEqual, 8)",  # C2: = HUB_WINDOWS (8-col); was stale 4
+            "aie.use_lock(%hub_return_empty, Release, 8)",
         )
     )
     errors.extend(
@@ -1562,10 +1562,10 @@ def validate_generated_mlir(mlir: str, schedule: DecodeSchedule = DEFAULT_SCHEDU
         errors.append("full-layer q4nx body record slots changed unexpectedly")
     if (
         HUB_Q_IN_CHANNEL != 1
-        or HUB_Q_OUT_CHANNELS != (1, 2, 3, 4)
-        or HUB_Q_OUT_BDS != (25, 2, 26, 3)
-        or HUB_RETURN_IN_CHANNELS != (2, 3, 4, 5)
-        or HUB_RETURN_IN_BDS != (4, 28, 6, 30)
+        or HUB_Q_OUT_CHANNELS != (1, 2, 3, 4, 1, 2, 3, 4)
+        or HUB_Q_OUT_BDS != (25, 2, 26, 3, 37, 5, 34, 8)  # 8-col; C1 remapped idx4/6 to 37/34 (odd ch -> BD>23)
+        or HUB_RETURN_IN_CHANNELS != (2, 3, 4, 5, 2, 3, 4, 5)
+        or HUB_RETURN_IN_BDS != (4, 28, 6, 30, 9, 35, 11, 36)  # 8-col; C1 remapped idx5/7 to 35/36 (odd ch -> BD>23)
         or HUB_DOWN_OUT_BDS != (27, 29, 31, 32, 33, 42, 43, 44)
     ):
         errors.append("hub BD contract mismatch")
