@@ -70,7 +70,8 @@ void matmul_vectorized_bf16_impl(const bfloat16 *__restrict pA,
 }
 
 void zero_kernel_bf16_impl(bfloat16 *__restrict pC) {
-#pragma unroll\    for (unsigned i = 0; i < 128 * 128; ++i) {
+#pragma unroll
+    for (unsigned i = 0; i < 128 * 128; ++i) {
         pC[i] = 0.0f;
     }
 }

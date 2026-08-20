@@ -140,7 +140,7 @@ def my_matmul(M, K, N, m, k, n):
                 f"B_L2L1_{col}",
                 mem_tiles[col],
                 [core_tiles[j][col] for j in range(n_aie_rows)],
-                2,
+                1,
                 B_l1_ty,
             )
             object_fifo_link(B_l3l2_fifos[col], B_l2l1_fifos[col])
